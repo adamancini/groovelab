@@ -1,0 +1,36 @@
+{{- if .Values.valkey.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "groovelab.fullname" . }}-valkey
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: valkey
+    app.kubernetes.io/part-of: groovelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "groovelab.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: valkey
+  template:
+    metadata:
+      labels:
+        {{- include "groovelab.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: valkey
+        app.kubernetes.io/part-of: groovelab
+    spec:
+      containers:
+        - name: valkey
+          image: "{{ .Values.valkey.image.repository }}:{{ .Values.valkey.image.tag }}"
+          ports:
+            - containerPort: 6379
+              protocol: TCP
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "groovelab.fullname" . }}-valkey-data
+{{- end }}
