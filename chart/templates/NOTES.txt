@@ -1,0 +1,14 @@
+Groovelab has been deployed!
+
+Access the application:
+{{- if .Values.ingress.enabled }}
+  https://{{ (index .Values.ingress.hosts 0).host }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  Run: kubectl get svc --namespace {{ .Release.Namespace }} {{ include "groovelab.fullname" . }}
+{{- else }}
+  Run: kubectl port-forward svc/{{ include "groovelab.fullname" . }} 8080:{{ .Values.service.port }} --namespace {{ .Release.Namespace }}
+  Then open: http://localhost:8080
+{{- end }}
+
+Check application status:
+  kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/instance={{ .Release.Name }}"

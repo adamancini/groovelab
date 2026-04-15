@@ -1,6 +1,24 @@
 apiVersion: v2
 name: groovelab
-description: A browser-based music theory learning and practice application for bassists
+description: Browser-based music theory learning and practice application for bassists
 type: application
 version: 0.1.0
 appVersion: "0.1.0"
+dependencies:
+  - name: postgresql
+    version: "16.x.x"
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: postgresql.enabled
+  - name: redis
+    version: "20.x.x"
+    repository: oci://registry-1.docker.io/bitnamicharts
+    condition: redis.enabled
+    alias: redis
+  - name: cert-manager
+    version: "1.x.x"
+    repository: https://charts.jetstack.io
+    condition: cert-manager.enabled
+  - name: replicated
+    version: "1.x.x"
+    repository: oci://registry.replicated.com/library
+    condition: replicated.enabled
