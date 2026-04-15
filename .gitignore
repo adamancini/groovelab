@@ -10,4 +10,5 @@
 /frontend/dist/
 
 # Helm
-chart/charts/*.tgz
+chart/charts/
+chart/Chart.lock

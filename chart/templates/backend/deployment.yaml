@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "groovelab.fullname" . }}-backend
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+    app.kubernetes.io/part-of: groovelab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "groovelab.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+  template:
+    metadata:
+      labels:
+        {{- include "groovelab.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: backend
+        app.kubernetes.io/part-of: groovelab
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: busybox:latest
+          command:
+            - sh
+            - -c
+            - |
+              until nc -zv $DB_HOST $DB_PORT; do
+                echo "Waiting for database at $DB_HOST:$DB_PORT..."
+                sleep 2
+              done
+              echo "Database is ready."
+          env:
+            - name: DB_HOST
+              value: "{{ include "groovelab.fullname" . }}-postgresql"
+            - name: DB_PORT
+              value: "5432"
+        - name: db-migrate
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          command:
+            - /server
+            - migrate
+          env:
+            - name: DB_HOST
+              value: "{{ include "groovelab.fullname" . }}-postgresql"
+            - name: DB_PORT
+              value: "5432"
+      containers:
+        - name: backend
+          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          env:
+            - name: DB_HOST
+              value: "{{ include "groovelab.fullname" . }}-postgresql"
+            - name: DB_PORT
+              value: "5432"

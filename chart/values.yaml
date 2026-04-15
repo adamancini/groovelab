@@ -2,11 +2,11 @@
 
 image:
   frontend:
-    repository: ghcr.io/adamancini/groovelab-frontend
+    repository: proxy.xyyzx.net/adamancini/groovelab-frontend
     tag: ""
     pullPolicy: IfNotPresent
   backend:
-    repository: ghcr.io/adamancini/groovelab-backend
+    repository: proxy.xyyzx.net/adamancini/groovelab-backend
     tag: ""
     pullPolicy: IfNotPresent
 
