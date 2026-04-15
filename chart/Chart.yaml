@@ -1,0 +1,6 @@
+apiVersion: v2
+name: groovelab
+description: A browser-based music theory learning and practice application for bassists
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
