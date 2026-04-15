@@ -1,15 +1,12 @@
 dependencies:
-- name: postgresql
-  repository: oci://registry-1.docker.io/bitnamicharts
-  version: 16.7.27
-- name: redis
-  repository: oci://registry-1.docker.io/bitnamicharts
-  version: 20.13.4
+- name: cloudnative-pg
+  repository: https://cloudnative-pg.github.io/charts
+  version: 0.28.0
 - name: cert-manager
   repository: https://charts.jetstack.io
   version: v1.19.4
 - name: replicated
   repository: oci://registry.replicated.com/library
   version: 1.19.1
-digest: sha256:476f29a593d2919a7a3213aba5436349528062705c8aaedffad02c57ceb33e07
-generated: "2026-04-15T14:20:23.880773-04:00"
+digest: sha256:67b6d68aac754d99ab60b514f5490e6171479e1479f918e7e77509f66fb85e39
+generated: "2026-04-15T17:10:49.112584-04:00"
