@@ -350,7 +350,7 @@ REGISTER_RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@e2e-test.local","password":"SecureP@ss123!"}')
 
-REGISTER_BODY=$(echo "$REGISTER_RESPONSE" | head -n -1)
+REGISTER_BODY=$(echo "$REGISTER_RESPONSE" | sed '$d')
 REGISTER_STATUS=$(echo "$REGISTER_RESPONSE" | tail -n 1)
 
 # Authboss may return 200, 302, or 307 on successful registration.
@@ -372,7 +372,7 @@ LOGIN_RESPONSE=$(curl -s -w "\n%{http_code}" \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@e2e-test.local","password":"SecureP@ss123!"}')
 
-LOGIN_BODY=$(echo "$LOGIN_RESPONSE" | head -n -1)
+LOGIN_BODY=$(echo "$LOGIN_RESPONSE" | sed '$d')
 LOGIN_STATUS=$(echo "$LOGIN_RESPONSE" | tail -n 1)
 
 if [[ "$LOGIN_STATUS" -ge 400 ]]; then
@@ -387,7 +387,7 @@ ADMIN_RESPONSE=$(curl -s -w "\n%{http_code}" \
   -b "$COOKIE_JAR" \
   "${BACKEND_URL}/api/v1/admin/")
 
-ADMIN_BODY=$(echo "$ADMIN_RESPONSE" | head -n -1)
+ADMIN_BODY=$(echo "$ADMIN_RESPONSE" | sed '$d')
 ADMIN_STATUS=$(echo "$ADMIN_RESPONSE" | tail -n 1)
 
 if [ "$ADMIN_STATUS" != "200" ]; then
@@ -402,7 +402,7 @@ ADMIN_USERS_RESPONSE=$(curl -s -w "\n%{http_code}" \
   -b "$COOKIE_JAR" \
   "${BACKEND_URL}/api/v1/admin/users")
 
-ADMIN_USERS_BODY=$(echo "$ADMIN_USERS_RESPONSE" | head -n -1)
+ADMIN_USERS_BODY=$(echo "$ADMIN_USERS_RESPONSE" | sed '$d')
 ADMIN_USERS_STATUS=$(echo "$ADMIN_USERS_RESPONSE" | tail -n 1)
 
 if [ "$ADMIN_USERS_STATUS" != "200" ]; then
