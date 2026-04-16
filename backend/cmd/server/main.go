@@ -13,7 +13,9 @@ import (
 	"github.com/adamancini/groovelab/internal/cache"
 	"github.com/adamancini/groovelab/internal/fretboard"
 	"github.com/adamancini/groovelab/internal/health"
+	"github.com/adamancini/groovelab/internal/progress"
 	"github.com/adamancini/groovelab/internal/settings"
+	"github.com/adamancini/groovelab/internal/tracks"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -82,6 +84,8 @@ func main() {
 	healthHandler := health.NewHandler(dbPool, redisClient, version)
 	fretboardHandler := fretboard.NewHandler(dbPool)
 	settingsHandler := settings.NewHandler(dbPool, authSystem.AB)
+	trackHandler := tracks.NewHandler(dbPool, authSystem.AB)
+	progressHandler := progress.NewHandler(dbPool, authSystem.AB)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -101,6 +105,18 @@ func main() {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"message":"Groovelab API v1"}`))
 		})
+
+		// Track CRUD (authenticated users only).
+		r.Route("/tracks", func(r chi.Router) {
+			r.Use(grooveauth.RequireAuth(authSystem.AB))
+			trackHandler.MountRoutes(r)
+		})
+
+		// Progress and streak tracking (authenticated users only).
+		r.Route("/progress", func(r chi.Router) {
+			r.Use(grooveauth.RequireAuth(authSystem.AB))
+			progressHandler.MountRoutes(r)
+		})
 	})
 
 	// Auth routes: /api/v1/auth/{login,logout,register,me}
@@ -118,7 +134,7 @@ func main() {
 		r.Put("/", settingsHandler.UpdateSettings)
 	})
 
-	// Protected routes example.
+	// Admin routes (require auth + admin role).
 	r.Route("/api/v1/admin", func(r chi.Router) {
 		r.Use(grooveauth.RequireAuth(authSystem.AB))
 		r.Use(grooveauth.RequireAdmin(authSystem.AB))
@@ -126,6 +142,11 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"message":"admin area"}`))
+		})
+
+		// Admin track listing (sees all tracks).
+		r.Route("/tracks", func(r chi.Router) {
+			trackHandler.MountAdminRoutes(r)
 		})
 	})
 
