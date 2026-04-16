@@ -43,11 +43,21 @@ spec:
           command:
             - /server
             - migrate
+            - /migrations
           env:
             - name: DB_HOST
               value: "{{ include "groovelab.fullname" . }}-postgresql"
             - name: DB_PORT
               value: "5432"
+            - name: DATABASE_USER
+              value: {{ .Values.cnpg.owner | default "groovelab" | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "groovelab.fullname" . }}-db-credentials
+                  key: password
+            - name: DATABASE_NAME
+              value: {{ .Values.cnpg.database | default "groovelab" | quote }}
       containers:
         - name: backend
           image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag | default .Chart.AppVersion }}"
@@ -58,7 +68,7 @@ spec:
               protocol: TCP
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: 8080
             initialDelaySeconds: 15
             periodSeconds: 30
@@ -73,3 +83,18 @@ spec:
               value: "{{ include "groovelab.fullname" . }}-postgresql"
             - name: DB_PORT
               value: "5432"
+            - name: DATABASE_USER
+              value: {{ .Values.cnpg.owner | default "groovelab" | quote }}
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "groovelab.fullname" . }}-db-credentials
+                  key: password
+            - name: DATABASE_NAME
+              value: {{ .Values.cnpg.database | default "groovelab" | quote }}
+            - name: REDIS_HOST
+              value: "{{ include "groovelab.fullname" . }}-valkey"
+            - name: REDIS_PORT
+              value: "6379"
+            - name: APP_VERSION
+              value: {{ .Chart.AppVersion | default "0.1.0" | quote }}
