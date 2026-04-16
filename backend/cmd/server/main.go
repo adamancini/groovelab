@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/adamancini/groovelab/internal/admin"
 	grooveauth "github.com/adamancini/groovelab/internal/auth"
 	"github.com/adamancini/groovelab/internal/cache"
 	"github.com/adamancini/groovelab/internal/flashcards"
@@ -87,6 +88,7 @@ func main() {
 	settingsHandler := settings.NewHandler(dbPool, authSystem.AB)
 	trackHandler := tracks.NewHandler(dbPool, authSystem.AB)
 	progressHandler := progress.NewHandler(dbPool, authSystem.AB)
+	adminHandler := admin.NewHandler(dbPool, authSystem.AB)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -145,10 +147,8 @@ func main() {
 			_, _ = w.Write([]byte(`{"message":"admin area"}`))
 		})
 
-		// Admin track listing (sees all tracks).
-		r.Route("/tracks", func(r chi.Router) {
-			trackHandler.MountAdminRoutes(r)
-		})
+		// Admin endpoints: user management + track moderation.
+		adminHandler.MountRoutes(r)
 	})
 
 	// Flashcard routes (auth optional -- guests can play without persistence).
