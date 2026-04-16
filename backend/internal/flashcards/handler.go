@@ -262,10 +262,17 @@ func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// Build session progress.
 	progress := h.getSessionProgress(sessionID, isGuest)
 
+	// Populate the next card in the session (if any remain).
+	var nextCard *SessionCard
+	if isGuest && sessionID != "" {
+		nextCard = h.getGuestNextCard(sessionID)
+	}
+
 	resp := AnswerResponse{
 		Correct:         correct,
 		CorrectAnswer:   card.CorrectAnswer,
 		Explanation:     explanation,
+		NextCard:        nextCard,
 		SessionProgress: progress,
 	}
 
@@ -306,6 +313,23 @@ func (h *Handler) updateGuestProgress(sessionID string, correct bool) {
 	if correct {
 		gs.correct++
 	}
+}
+
+// getGuestNextCard returns the next unanswered card in a guest session,
+// or nil if all cards have been answered. Must be called after
+// updateGuestProgress has incremented the answered counter.
+func (h *Handler) getGuestNextCard(sessionID string) *SessionCard {
+	h.guestMu.Lock()
+	defer h.guestMu.Unlock()
+	gs, ok := h.guestSessions[sessionID]
+	if !ok {
+		return nil
+	}
+	if gs.answered >= len(gs.cards) {
+		return nil
+	}
+	next := gs.cards[gs.answered]
+	return &next
 }
 
 // getSessionProgress returns progress counters for the session.

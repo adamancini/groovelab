@@ -451,6 +451,67 @@ func TestAnswer_GuestCanSubmitAnswer(t *testing.T) {
 	assert.Equal(t, 1, result.SessionProgress.Correct)
 }
 
+func TestAnswer_GuestResponseContainsNextCard(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Start a guest session with multiple cards.
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(body, &session))
+	require.Greater(t, len(session.Cards), 1, "need at least 2 cards to test next_card")
+
+	firstCard := session.Cards[0]
+	expectedNextCard := session.Cards[1]
+
+	// Submit answer for the first card.
+	answerReq := map[string]interface{}{
+		"card_id":      firstCard.ID,
+		"answer":       json.RawMessage(firstCard.CorrectAnswer),
+		"input_method": "multiple_choice",
+	}
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+	answerResp := postJSON(t, client, answerURL, answerReq)
+	answerBody := readBody(t, answerResp)
+
+	assert.Equal(t, http.StatusOK, answerResp.StatusCode)
+
+	var result flashcards.AnswerResponse
+	require.NoError(t, json.Unmarshal(answerBody, &result))
+
+	// next_card must be non-null when cards remain in the session.
+	require.NotNil(t, result.NextCard, "next_card must be non-null when cards remain")
+	assert.Equal(t, expectedNextCard.ID, result.NextCard.ID,
+		"next_card should be the second card in the session")
+
+	// Answer all remaining cards to verify next_card becomes null on the last one.
+	for i := 1; i < len(session.Cards); i++ {
+		card := session.Cards[i]
+		req := map[string]interface{}{
+			"card_id":      card.ID,
+			"answer":       json.RawMessage(card.CorrectAnswer),
+			"input_method": "multiple_choice",
+		}
+		r := postJSON(t, client, answerURL, req)
+		b := readBody(t, r)
+		require.Equal(t, http.StatusOK, r.StatusCode)
+
+		var res flashcards.AnswerResponse
+		require.NoError(t, json.Unmarshal(b, &res))
+
+		if i < len(session.Cards)-1 {
+			assert.NotNil(t, res.NextCard,
+				"next_card should be non-null for card %d/%d", i+1, len(session.Cards))
+		} else {
+			assert.Nil(t, res.NextCard,
+				"next_card should be null after the last card is answered")
+		}
+	}
+}
+
 func TestAnswer_WrongAnswerReturnsCorrectAnswer(t *testing.T) {
 	env := setupTestEnv(t)
 	client := newClientWithCookies(t)
