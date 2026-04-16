@@ -175,3 +175,71 @@ export function submitAnswer(
     }),
   });
 }
+
+// --------------- Fretboard endpoints ---------------
+
+/** A tuning preset returned by the backend. */
+export interface TuningPreset {
+  id: string;
+  name: string;
+  strings: number;
+  notes: string[];
+}
+
+/** GET /api/v1/fretboard/tunings -- list tuning presets. */
+export function fetchTuningPresets(): Promise<TuningPreset[]> {
+  return apiRequest<TuningPreset[]>("/fretboard/tunings");
+}
+
+/** PUT /api/v1/settings -- save user settings (e.g. tuning preference). */
+export function saveSettings(
+  settings: Record<string, unknown>,
+): Promise<void> {
+  return apiRequest<void>("/settings", {
+    method: "PUT",
+    body: JSON.stringify(settings),
+  });
+}
+
+// --------------- Progress endpoints ---------------
+
+/** A single topic mastery entry. */
+export interface TopicMastery {
+  topic: string;
+  accuracy: number;
+  cards_mastered: number;
+  cards_total: number;
+}
+
+/** A weak card entry (< 50% accuracy). */
+export interface WeakCard {
+  card_id: string;
+  question: string;
+  accuracy: number;
+  topic: string;
+}
+
+/** Dashboard data from GET /api/v1/progress/dashboard. */
+export interface ProgressDashboard {
+  overall_accuracy: number;
+  cards_mastered: number;
+  cards_total: number;
+  topics: TopicMastery[];
+  weak_cards: WeakCard[];
+}
+
+/** Streak data from GET /api/v1/progress/streaks. */
+export interface StreakData {
+  current_streak: number;
+  best_streak: number;
+}
+
+/** GET /api/v1/progress/dashboard -- progress dashboard data. */
+export function fetchProgressDashboard(): Promise<ProgressDashboard> {
+  return apiRequest<ProgressDashboard>("/progress/dashboard");
+}
+
+/** GET /api/v1/progress/streaks -- streak data. */
+export function fetchStreaks(): Promise<StreakData> {
+  return apiRequest<StreakData>("/progress/streaks");
+}

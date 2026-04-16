@@ -9,6 +9,8 @@ import Register from "./pages/auth/Register";
 import Placeholder from "./pages/Placeholder";
 import Learn from "./pages/Learn";
 import FlashcardSession from "./pages/FlashcardSession";
+import FretboardRef from "./pages/FretboardRef";
+import Progress from "./pages/Progress";
 
 export default function App() {
   return (
@@ -30,10 +32,8 @@ export default function App() {
                 path="/play/:id"
                 element={<Placeholder title="Track Playback" />}
               />
-              <Route
-                path="/fretboard"
-                element={<Placeholder title="Fretboard" />}
-              />
+              <Route path="/fretboard" element={<FretboardRef />} />
+              <Route path="/progress" element={<Progress />} />
               <Route path="/auth/signin" element={<SignIn />} />
               <Route path="/auth/register" element={<Register />} />
               <Route
