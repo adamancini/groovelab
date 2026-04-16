@@ -139,25 +139,33 @@ log "Log file: $LOG_FILE"
 # ════════════════════════════════════════════════════════════════════════════
 log "=== STEP 1: Validate prerequisites ==="
 
-# Check required tools.
-for tool in gh replicated cosign docker kubectl; do
+# Check tools that are always required (skip gracefully if absent).
+for tool in gh replicated; do
   if ! command -v "$tool" &>/dev/null; then
-    fail "Required tool '${tool}' is not installed or not in PATH"
+    skip "Required tool '${tool}' is not installed or not in PATH"
   fi
   log "  ${tool}: $(command -v "$tool")"
 done
 
 # Verify gh authentication.
 if ! gh auth status &>/dev/null; then
-  fail "gh CLI is not authenticated. Run 'gh auth login' first."
+  skip "gh CLI is not authenticated. Run 'gh auth login' first."
 fi
 log "  gh auth: OK"
 
 # Check REPLICATED_API_TOKEN.
 if [ -z "${REPLICATED_API_TOKEN:-}" ]; then
-  fail "REPLICATED_API_TOKEN is not set"
+  skip "REPLICATED_API_TOKEN is not set"
 fi
 log "  REPLICATED_API_TOKEN: set"
+
+# Check tools needed only for the active pipeline steps (skip if absent).
+for tool in cosign docker kubectl; do
+  if ! command -v "$tool" &>/dev/null; then
+    skip "Optional tool '${tool}' is not installed. Install it to run the full CI/CD pipeline e2e."
+  fi
+  log "  ${tool}: $(command -v "$tool")"
+done
 
 pass "Step 1 -- all prerequisites satisfied."
 
