@@ -54,7 +54,7 @@ spec:
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "groovelab.fullname" . }}-db-credentials
+                  name: {{ include "groovelab.fullname" . }}-cnpg-credentials
                   key: password
             - name: DATABASE_NAME
               value: {{ .Values.cnpg.database | default "groovelab" | quote }}
@@ -88,7 +88,7 @@ spec:
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ include "groovelab.fullname" . }}-db-credentials
+                  name: {{ include "groovelab.fullname" . }}-cnpg-credentials
                   key: password
             - name: DATABASE_NAME
               value: {{ .Values.cnpg.database | default "groovelab" | quote }}
