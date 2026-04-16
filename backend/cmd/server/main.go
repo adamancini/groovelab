@@ -11,7 +11,9 @@ import (
 
 	grooveauth "github.com/adamancini/groovelab/internal/auth"
 	"github.com/adamancini/groovelab/internal/cache"
+	"github.com/adamancini/groovelab/internal/fretboard"
 	"github.com/adamancini/groovelab/internal/health"
+	"github.com/adamancini/groovelab/internal/settings"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -78,6 +80,8 @@ func main() {
 	}
 
 	healthHandler := health.NewHandler(dbPool, redisClient, version)
+	fretboardHandler := fretboard.NewHandler(dbPool)
+	settingsHandler := settings.NewHandler(dbPool, authSystem.AB)
 
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
@@ -101,6 +105,18 @@ func main() {
 
 	// Auth routes: /api/v1/auth/{login,logout,register,me}
 	authSystem.MountRoutes(r, "/api/v1/auth")
+
+	// Fretboard reference data (public).
+	r.Route("/api/v1/fretboard", func(r chi.Router) {
+		r.Get("/tunings", fretboardHandler.ListTunings)
+	})
+
+	// User settings (requires auth).
+	r.Route("/api/v1/settings", func(r chi.Router) {
+		r.Use(grooveauth.RequireAuth(authSystem.AB))
+		r.Get("/", settingsHandler.GetSettings)
+		r.Put("/", settingsHandler.UpdateSettings)
+	})
 
 	// Protected routes example.
 	r.Route("/api/v1/admin", func(r chi.Router) {
