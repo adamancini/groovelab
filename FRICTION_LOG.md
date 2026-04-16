@@ -64,3 +64,51 @@ Shared at the end of the exercise as structured developer experience feedback.
 **Resolution:** Manually extracted all `.tgz` files in `chart/charts/` (e.g., `cd chart/charts && ls *.tgz | while read f; do tar xzf "$f"; done`). After extraction, `helm template` (without `--dependency-update`) and `helm install` correctly rendered all subchart templates. ~30 minutes of debugging across multiple install/uninstall cycles, helm template comparisons, and source inspection before identifying the root cause.
 
 **Severity:** blocker (worked around)
+
+## Entry 6 — 2026-04-15 — annoyance
+
+**Trying to:** Select Helm chart dependencies for PostgreSQL and Redis in a new project.
+
+**Expected:** An AI coding agent would default to first-party, upstream-maintained images and charts (e.g., CloudNativePG operator for Postgres, Valkey for Redis) or at minimum ask before choosing a packaging layer.
+
+**Actual:** The agent defaulted to Bitnami subcharts (`oci://registry-1.docker.io/bitnamicharts`) for both PostgreSQL and Redis without considering alternatives. Bitnami images are no longer actively maintained by VMware/Broadcom and represent a known maintenance risk. The incorrect choice was not caught until after the walking skeleton story (GRO-dlnm) was accepted and merged to main, requiring a follow-up story (GRO-lbmc) to replace both dependencies with CNPG + Valkey.
+
+**Resolution:** Added project-level memory rule prohibiting Bitnami. Created GRO-lbmc to replace postgresql with CloudNativePG operator and redis with Valkey inline templates. ~20 minutes of coordination overhead to create the corrective story and redirect the execution loop.
+
+**Severity:** annoyance
+
+## Entry 7 — 2026-04-15 — blocker
+
+**Trying to:** Run an e2e test that installs the Helm chart on a CMX cluster using `--set image.*.repository=ghcr.io/adamancini/...` to bypass the Replicated proxy registry.
+
+**Expected:** The CMX cluster would pull images directly from GHCR since they were just pushed successfully from the local machine.
+
+**Actual:** `ImagePullBackOff` on both frontend and backend pods. GHCR repositories are private and the CMX cluster has no credentials to pull from them. CNPG (public) and Valkey (public) pods came up fine; only the application pods failed. The helm install appeared to succeed but the application never became ready. The silent failure mode (helm exits 0, pods fail asynchronously) made this hard to catch quickly.
+
+**Resolution:** The e2e script must either: (a) create a Kubernetes `imagePullSecret` from local docker credentials before helm install and pass `--set global.imagePullSecrets[0].name=...`, or (b) use the Replicated proxy domain (already in values.yaml) with a test customer license ID as the pull secret password. Script was rewritten with GHCR imagePullSecret creation.
+
+**Severity:** blocker
+
+## Entry 8 — 2026-04-16 — annoyance
+
+**Trying to:** Export a kubeconfig from a CMX cluster using `replicated cluster kubeconfig CLUSTER_ID > /tmp/kubeconfig.yaml` (stdout redirect).
+
+**Expected:** The command would output valid kubeconfig YAML to stdout, allowing standard shell redirection to save it to a file.
+
+**Actual:** Without `--stdout` or `--output-path`, the `replicated cluster kubeconfig` command merges into the existing kubeconfig file by default and prints status text to stdout. Redirecting stdout captures the status text (not YAML), producing an unparseable file. `kubectl` then fails with "couldn't get version/kind; json parse error".
+
+**Resolution:** Use `--output-path /tmp/kubeconfig.yaml` flag instead of stdout redirect. The `--help` text documents this, but the default merge-into-existing behavior is surprising when you just want a standalone kubeconfig file.
+
+**Severity:** annoyance
+
+## Entry 9 — 2026-04-16 — annoyance
+
+**Trying to:** Install the Helm chart on a CMX cluster with the Replicated SDK subchart enabled alongside `global.imagePullSecrets[0].name=ghcr-credentials`.
+
+**Expected:** The SDK subchart would handle the case where `global.replicated.dockerconfigjson` is empty/default gracefully, either skipping secret creation or creating a valid empty secret.
+
+**Actual:** The Replicated SDK subchart creates an `enterprise-pull-secret` of type `kubernetes.io/dockerconfigjson` with the empty string as the `.dockerconfigjson` data value. Kubernetes validates this field and rejects the secret because an empty string is not valid JSON. The entire `helm install` fails with: `Secret "enterprise-pull-secret" is invalid: data[.dockerconfigjson]: Invalid value: unexpected end of JSON input`.
+
+**Resolution:** Disabled the Replicated SDK subchart (`--set replicated.enabled=false`) and nulled the dockerconfigjson key (`--set global.replicated.dockerconfigjson=null`) during e2e testing since no license is needed for the walking skeleton. This is fine for dev/e2e but means the SDK is not exercised in the e2e path.
+
+**Severity:** annoyance

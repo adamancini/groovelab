@@ -1,5 +1,13 @@
 # Groovelab Helm chart values
 
+global:
+  imagePullSecrets: []
+  replicated:
+    dockerconfigjson: ""
+
+images:
+  pullSecrets: []
+
 image:
   frontend:
     repository: proxy.xyyzx.net/adamancini/groovelab-frontend
@@ -26,13 +34,16 @@ ingress:
           pathType: Prefix
   tls: []
 
-postgresql:
+cloudnative-pg:
   enabled: true
-  auth:
-    database: groovelab
-    username: groovelab
-    password: ""
-    existingSecret: ""
+
+cnpg:
+  instances: 1
+  database: groovelab
+  owner: groovelab
+  password: ""
+  storage:
+    size: 1Gi
 
 externalDatabase:
   host: ""
@@ -43,12 +54,13 @@ externalDatabase:
   existingSecret: ""
   sslMode: "require"
 
-redis:
+valkey:
   enabled: true
-  auth:
-    enabled: true
-    password: ""
-    existingSecret: ""
+  image:
+    repository: valkey/valkey
+    tag: "8"
+  storage:
+    size: 1Gi
 
 cert-manager:
   enabled: true
