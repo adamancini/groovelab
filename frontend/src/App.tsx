@@ -7,6 +7,8 @@ import Home from "./pages/Home";
 import SignIn from "./pages/auth/SignIn";
 import Register from "./pages/auth/Register";
 import Placeholder from "./pages/Placeholder";
+import Learn from "./pages/Learn";
+import FlashcardSession from "./pages/FlashcardSession";
 
 export default function App() {
   return (
@@ -18,10 +20,10 @@ export default function App() {
           <main id="main-content">
             <Routes>
               <Route path="/" element={<Home />} />
-              <Route path="/learn" element={<Placeholder title="Learn" />} />
+              <Route path="/learn" element={<Learn />} />
               <Route
                 path="/learn/:topic"
-                element={<Placeholder title="Flashcard Session" />}
+                element={<FlashcardSession />}
               />
               <Route path="/play" element={<Placeholder title="Play" />} />
               <Route
