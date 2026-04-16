@@ -1,5 +1,13 @@
 # Groovelab Helm chart values
 
+global:
+  imagePullSecrets: []
+  replicated:
+    dockerconfigjson: ""
+
+images:
+  pullSecrets: []
+
 image:
   frontend:
     repository: proxy.xyyzx.net/adamancini/groovelab-frontend
