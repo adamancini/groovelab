@@ -12,7 +12,6 @@
  */
 
 import { useCallback, useMemo, useState } from "react";
-import Fretboard from "../components/Fretboard";
 import TuningConfigurator from "../components/fretboard/TuningConfigurator";
 import NoteInfoPanel from "../components/fretboard/NoteInfoPanel";
 import ScaleChordFilter from "../components/fretboard/ScaleChordFilter";
@@ -52,34 +51,6 @@ export default function FretboardRef() {
 
   // The effective tonic: only relevant when a scale/chord + key is selected.
   const activeTonic = selectedDef ? selectedKey : null;
-
-  // Compute highlighted positions for the Fretboard component.
-  // Each position gets a label (note name) and a style marker in the label prefix.
-  const positions = useMemo<FretboardPosition[]>(() => {
-    const result: FretboardPosition[] = [];
-
-    for (let s = 0; s < noteMap.length; s++) {
-      for (let f = 0; f <= DEFAULT_FRETS; f++) {
-        const note = noteMap[s][f];
-        const isMember = memberNotes ? memberNotes.has(note) : true;
-        const isTonic = activeTonic
-          ? note === activeTonic ||
-            // Handle enharmonic matches
-            note ===
-              (activeTonic as string)
-          : false;
-        const isTapped = tappedNote !== null && note === tappedNote;
-
-        // Always include the position so every fret is tappable.
-        result.push({
-          string: s,
-          fret: f,
-          label: note,
-        });
-      }
-    }
-    return result;
-  }, [noteMap, memberNotes, activeTonic, tappedNote]);
 
   // Determine the style for each position (used for custom rendering).
   const getPositionStyle = useCallback(
@@ -153,7 +124,6 @@ export default function FretboardRef() {
             tuning={tuning}
             frets={DEFAULT_FRETS}
             noteMap={noteMap}
-            memberNotes={memberNotes}
             tappedNote={tappedNote}
             activeTonic={activeTonic}
             onTap={handleTap}
@@ -178,7 +148,6 @@ interface FretboardRefSVGProps {
   tuning: string[];
   frets: number;
   noteMap: NoteName[][];
-  memberNotes: Set<NoteName> | null;
   tappedNote: string | null;
   activeTonic: string | null;
   onTap: (pos: FretboardPosition) => void;
@@ -203,7 +172,6 @@ function FretboardRefSVG({
   tuning,
   frets,
   noteMap,
-  memberNotes,
   tappedNote,
   activeTonic,
   onTap,

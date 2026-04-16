@@ -11,12 +11,7 @@ import { MemoryRouter, Route, Routes } from "react-router";
 import { AuthProvider } from "../context/AuthContext";
 import { ThemeProvider } from "../context/ThemeContext";
 import FretboardRef from "../pages/FretboardRef";
-import {
-  DEFAULT_TUNING_PRESETS,
-  noteAtFret,
-  getScaleChordNotes,
-  SCALE_CHORD_LIBRARY,
-} from "../lib/music-theory";
+import { DEFAULT_TUNING_PRESETS } from "../lib/music-theory";
 
 // ---------------------------------------------------------------------------
 // Test helpers

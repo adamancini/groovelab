@@ -6,12 +6,10 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  CHROMATIC_NOTES,
   normalizeNote,
   noteIndex,
   noteAtFret,
   intervalName,
-  INTERVAL_NAMES,
   SCALE_CHORD_LIBRARY,
   getScaleChordNotes,
   DEFAULT_TUNING_PRESETS,
