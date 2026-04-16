@@ -11,8 +11,9 @@ import (
 type User struct {
 	ID                 string          `json:"id"`
 	Email              string          `json:"email"`
-	PasswordHash       *string         `json:"password_hash"`
+	PasswordHash       *string         `json:"-"`
 	Role               string          `json:"role"`
+	Enabled            bool            `json:"enabled"`
 	OAuthProviders     json.RawMessage `json:"oauth_providers"`
 	InstrumentSettings json.RawMessage `json:"instrument_settings"`
 	Preferences        json.RawMessage `json:"preferences"`

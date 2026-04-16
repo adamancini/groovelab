@@ -95,6 +95,33 @@ func (q *Querier) ListAllTracks(ctx context.Context) ([]*Track, error) {
 	return tracks, nil
 }
 
+// ListAllTracksWithEmail returns all tracks joined with user email (admin use).
+func (q *Querier) ListAllTracksWithEmail(ctx context.Context) ([]*AdminTrack, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT t.id, t.user_id, u.email, t.name, t.chord_sequence, t.drum_pattern, t.bpm, t.playback_settings, t.created_at, t.updated_at
+		 FROM tracks t
+		 JOIN users u ON t.user_id = u.id
+		 ORDER BY t.updated_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list all tracks with email: %w", err)
+	}
+	defer rows.Close()
+
+	var tracks []*AdminTrack
+	for rows.Next() {
+		var t AdminTrack
+		if err := rows.Scan(&t.ID, &t.UserID, &t.UserEmail, &t.Name, &t.ChordSequence, &t.DrumPattern, &t.BPM, &t.PlaybackSettings, &t.CreatedAt, &t.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan admin track row: %w", err)
+		}
+		tracks = append(tracks, &t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate admin track rows: %w", err)
+	}
+	return tracks, nil
+}
+
 // UpdateTrack updates a track and returns the updated row.
 func (q *Querier) UpdateTrack(ctx context.Context, id, name string, chordSequence, drumPattern json.RawMessage, bpm int, playbackSettings json.RawMessage) (*Track, error) {
 	var t Track

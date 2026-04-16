@@ -30,9 +30,9 @@ func (q *Querier) CreateUser(ctx context.Context, email, passwordHash, role stri
 	err := q.pool.QueryRow(ctx,
 		`INSERT INTO users (email, password_hash, role)
 		 VALUES ($1, $2, $3)
-		 RETURNING id, email, password_hash, role, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
+		 RETURNING id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
 		email, ph, role,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
@@ -43,10 +43,10 @@ func (q *Querier) CreateUser(ctx context.Context, email, passwordHash, role stri
 func (q *Querier) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	var u User
 	err := q.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, role, oauth_providers, instrument_settings, preferences, created_at, updated_at
+		`SELECT id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
 		 FROM users WHERE email = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -60,10 +60,10 @@ func (q *Querier) GetUserByEmail(ctx context.Context, email string) (*User, erro
 func (q *Querier) GetUserByID(ctx context.Context, id string) (*User, error) {
 	var u User
 	err := q.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, role, oauth_providers, instrument_settings, preferences, created_at, updated_at
+		`SELECT id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
 		 FROM users WHERE id = $1`,
 		id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -85,11 +85,57 @@ func (q *Querier) UpdateUser(ctx context.Context, id, email, passwordHash, role 
 		 SET email = $2, password_hash = $3, role = $4, oauth_providers = $5,
 		     instrument_settings = $6, preferences = $7, updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, email, password_hash, role, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
+		 RETURNING id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
 		id, email, ph, role, oauthProviders, instrumentSettings, preferences,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("update user: %w", err)
+	}
+	return &u, nil
+}
+
+// ListAllUsers returns all users ordered by created_at DESC (admin use).
+func (q *Querier) ListAllUsers(ctx context.Context) ([]*User, error) {
+	rows, err := q.pool.Query(ctx,
+		`SELECT id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
+		 FROM users
+		 ORDER BY created_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list all users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []*User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan user row: %w", err)
+		}
+		users = append(users, &u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate user rows: %w", err)
+	}
+	return users, nil
+}
+
+// UpdateUserAdmin updates a user's role and enabled status (admin use).
+// Returns nil, nil if the user is not found.
+func (q *Querier) UpdateUserAdmin(ctx context.Context, id, role string, enabled bool) (*User, error) {
+	var u User
+	err := q.pool.QueryRow(ctx,
+		`UPDATE users
+		 SET role = $2, enabled = $3, updated_at = now()
+		 WHERE id = $1
+		 RETURNING id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
+		id, role, enabled,
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("update user admin: %w", err)
 	}
 	return &u, nil
 }

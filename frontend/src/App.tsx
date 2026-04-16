@@ -7,6 +7,12 @@ import Home from "./pages/Home";
 import SignIn from "./pages/auth/SignIn";
 import Register from "./pages/auth/Register";
 import Placeholder from "./pages/Placeholder";
+import AdminLayout from "./pages/admin/AdminLayout";
+import Updates from "./pages/admin/Updates";
+import Users from "./pages/admin/Users";
+import AdminTracks from "./pages/admin/Tracks";
+import License from "./pages/admin/License";
+import Support from "./pages/admin/Support";
 
 export default function App() {
   return (
@@ -38,10 +44,13 @@ export default function App() {
                 path="/settings"
                 element={<Placeholder title="Settings" />}
               />
-              <Route
-                path="/admin/*"
-                element={<Placeholder title="Admin Panel" />}
-              />
+              <Route path="/admin" element={<AdminLayout />}>
+                <Route index element={<Updates />} />
+                <Route path="users" element={<Users />} />
+                <Route path="tracks" element={<AdminTracks />} />
+                <Route path="license" element={<License />} />
+                <Route path="support" element={<Support />} />
+              </Route>
               <Route
                 path="*"
                 element={<Placeholder title="Page Not Found" />}
