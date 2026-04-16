@@ -107,6 +107,36 @@ function createFetchMock(overrides: Record<string, unknown> = {}) {
       });
     }
 
+    // Replicated SDK proxy: license.
+    if (urlStr.includes("/api/replicated/license")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            license_id: "lic-test-123",
+            license_type: "paid",
+            expires_at: "2027-06-01T00:00:00Z",
+            entitlements: [
+              { field: "track_export_enabled", value: "true" },
+            ],
+          }),
+      });
+    }
+
+    // Replicated SDK proxy: updates.
+    if (urlStr.includes("/api/replicated/updates")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            versionLabel: "1.2.0",
+            isDeployable: true,
+          }),
+      });
+    }
+
     // Default: 404.
     return Promise.resolve({
       ok: false,
@@ -140,6 +170,19 @@ function createGuestFetchMock() {
         ok: false,
         status: 403,
         json: () => Promise.resolve({ error: "admin access required" }),
+      });
+    }
+
+    // Replicated SDK proxy: updates (available for non-admin too).
+    if (urlStr.includes("/api/replicated/updates")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            versionLabel: "1.2.0",
+            isDeployable: true,
+          }),
       });
     }
 
@@ -236,18 +279,25 @@ describe("Admin Panel", () => {
   });
 
   describe("Updates page", () => {
-    it("renders the Updates placeholder", async () => {
+    it("renders current version and available update", async () => {
       vi.stubGlobal("fetch", createFetchMock());
       window.history.pushState({}, "", "/admin");
 
       render(<App />);
 
-      await screen.findByTestId("updates-placeholder");
-      expect(
-        screen.getByText(
-          "Coming soon -- will be connected to Replicated SDK",
-        ),
-      ).toBeInTheDocument();
+      // Wait for the Updates page to load with real data.
+      const versionCard = await screen.findByTestId("current-version-card");
+      expect(versionCard).toBeInTheDocument();
+
+      // Should show the available update version.
+      const updateCard = await screen.findByTestId("available-update-card");
+      expect(updateCard).toBeInTheDocument();
+      expect(screen.getByTestId("available-version")).toHaveTextContent(
+        "v1.2.0",
+      );
+
+      // Should have an Apply Update button.
+      expect(screen.getByTestId("apply-update-button")).toBeInTheDocument();
     });
   });
 
@@ -400,17 +450,35 @@ describe("Admin Panel", () => {
   });
 
   describe("License page", () => {
-    it("renders the License placeholder", async () => {
+    it("renders license details and entitlements", async () => {
       vi.stubGlobal("fetch", createFetchMock());
       window.history.pushState({}, "", "/admin/license");
 
       render(<App />);
 
-      await screen.findByTestId("license-placeholder");
+      // Wait for the License page to load with real data.
+      const details = await screen.findByTestId("license-details");
+      expect(details).toBeInTheDocument();
+
+      // Should display the license ID.
+      expect(screen.getByTestId("license-id")).toHaveTextContent(
+        "lic-test-123",
+      );
+
+      // Should display the license type.
+      expect(screen.getByTestId("license-type")).toHaveTextContent("paid");
+
+      // Should display the health indicator.
       expect(
-        screen.getByText(
-          "Coming soon -- will be connected to Replicated SDK",
-        ),
+        screen.getByTestId("license-health-indicator"),
+      ).toBeInTheDocument();
+
+      // Should display entitlements.
+      expect(
+        screen.getByTestId("license-entitlements"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("entitlement-track_export_enabled"),
       ).toBeInTheDocument();
     });
   });
