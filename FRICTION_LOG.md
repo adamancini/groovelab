@@ -103,6 +103,16 @@ Shared at the end of the exercise as structured developer experience feedback.
 
 ## Entry 9 — 2026-04-16 — annoyance
 
+**Trying to:** Deploy the application on a fresh CMX k3s cluster using Helm with CNPG for PostgreSQL.
+
+**Expected:** The backend pod would come up cleanly after migrations ran, since the Helm chart creates both the CNPG cluster credentials and the backend DB credentials.
+
+**Actual:** The backend `db-migrate` init container entered `CrashLoopBackOff` immediately. Root cause: `chart/templates/postgresql/secret.yaml` generated a random password for the CNPG `bootstrap.initdb.secret`, and `chart/templates/backend/secret.yaml` generated a *different* random password for the backend `DATABASE_PASSWORD`. The database was initialized with one password; the backend tried to authenticate with another. Additionally, `postgresql/secret.yaml` lacked a `lookup` guard, so the password would re-randomize on every `helm upgrade`, breaking existing connections.
+
+**Resolution:** Removed `backend/secret.yaml`, updated both the `db-migrate` init container and the main backend container to reference `cnpg-credentials` directly (the same secret CNPG uses), and added a `lookup` guard to `postgresql/secret.yaml` to stabilize the password across upgrades. ~30 minutes diagnosing pod logs versus config, then 10 minutes implementing the fix.
+
+**Severity:** blocker
+
 **Trying to:** Install the Helm chart on a CMX cluster with the Replicated SDK subchart enabled alongside `global.imagePullSecrets[0].name=ghcr-credentials`.
 
 **Expected:** The SDK subchart would handle the case where `global.replicated.dockerconfigjson` is empty/default gracefully, either skipping secret creation or creating a valid empty secret.
