@@ -7,7 +7,7 @@
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { BrowserRouter } from "react-router";
+import { BrowserRouter, MemoryRouter, Route, Routes } from "react-router";
 import { AuthProvider } from "../context/AuthContext";
 import { ThemeProvider } from "../context/ThemeContext";
 import Learn from "../pages/Learn";
@@ -146,6 +146,21 @@ function renderWithProviders(ui: React.ReactElement) {
     <ThemeProvider>
       <AuthProvider>
         <BrowserRouter>{ui}</BrowserRouter>
+      </AuthProvider>
+    </ThemeProvider>,
+  );
+}
+
+// FlashcardSession needs a matched route so useParams() can populate `topic`.
+function renderSessionWithProviders(topic = "major-chords") {
+  return render(
+    <ThemeProvider>
+      <AuthProvider>
+        <MemoryRouter initialEntries={[`/learn/${topic}`]}>
+          <Routes>
+            <Route path="/learn/:topic" element={<FlashcardSession />} />
+          </Routes>
+        </MemoryRouter>
       </AuthProvider>
     </ThemeProvider>,
   );
@@ -632,8 +647,6 @@ describe("AnswerFeedback", () => {
 
 describe("FlashcardSession", () => {
   beforeEach(() => {
-    // Set the URL to /learn/major-chords so useParams picks up the topic.
-    window.history.pushState({}, "", "/learn/major-chords");
     localStorage.clear();
   });
 
@@ -642,7 +655,7 @@ describe("FlashcardSession", () => {
       "fetch",
       vi.fn(() => new Promise(() => {})),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
     expect(screen.getByText("Loading session...")).toBeInTheDocument();
   });
 
@@ -651,7 +664,7 @@ describe("FlashcardSession", () => {
       "fetch",
       mockFetch({ "/flashcards/session": MOCK_SESSION }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("breadcrumb");
     expect(screen.getByTestId("session-progress")).toBeInTheDocument();
@@ -663,7 +676,7 @@ describe("FlashcardSession", () => {
       "fetch",
       mockFetch({ "/flashcards/session": MOCK_SESSION }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("question-text");
     expect(screen.getByTestId("question-text")).toHaveTextContent(
@@ -676,7 +689,7 @@ describe("FlashcardSession", () => {
       "fetch",
       mockFetch({ "/flashcards/session": MOCK_SESSION }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("multiple-choice");
     expect(screen.getByTestId("option-C E G")).toBeInTheDocument();
@@ -687,7 +700,7 @@ describe("FlashcardSession", () => {
       "fetch",
       mockFetch({ "/flashcards/session": MOCK_SESSION }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("skip-button");
     expect(screen.getByTestId("skip-button")).toBeInTheDocument();
@@ -701,7 +714,7 @@ describe("FlashcardSession", () => {
         "/flashcards/answer": MOCK_ANSWER_CORRECT,
       }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("option-C E G");
     fireEvent.click(screen.getByTestId("option-C E G"));
@@ -719,7 +732,7 @@ describe("FlashcardSession", () => {
         "/flashcards/answer": MOCK_ANSWER_WRONG,
       }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("option-C Eb G");
     fireEvent.click(screen.getByTestId("option-C Eb G"));
@@ -745,7 +758,7 @@ describe("FlashcardSession", () => {
         "/flashcards/answer": MOCK_ANSWER_CORRECT,
       }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("option-C E G");
     fireEvent.click(screen.getByTestId("option-C E G"));
@@ -790,7 +803,7 @@ describe("FlashcardSession", () => {
         "/flashcards/answer": finalAnswer,
       }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("option-C E G");
     fireEvent.click(screen.getByTestId("option-C E G"));
@@ -834,7 +847,7 @@ describe("FlashcardSession", () => {
         "/flashcards/answer": finalAnswer,
       }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("option-C E G");
     fireEvent.click(screen.getByTestId("option-C E G"));
@@ -860,7 +873,7 @@ describe("FlashcardSession", () => {
         }),
       ),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
     await screen.findByText("session error");
     expect(screen.getByRole("alert")).toBeInTheDocument();
   });
@@ -870,7 +883,7 @@ describe("FlashcardSession", () => {
       "fetch",
       mockFetch({ "/flashcards/session": MOCK_SESSION }),
     );
-    renderWithProviders(<FlashcardSession />);
+    renderSessionWithProviders();
 
     await screen.findByTestId("skip-button");
     fireEvent.click(screen.getByTestId("skip-button"));
