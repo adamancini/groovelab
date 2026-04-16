@@ -11,6 +11,7 @@ import (
 
 	grooveauth "github.com/adamancini/groovelab/internal/auth"
 	"github.com/adamancini/groovelab/internal/cache"
+	"github.com/adamancini/groovelab/internal/flashcards"
 	"github.com/adamancini/groovelab/internal/fretboard"
 	"github.com/adamancini/groovelab/internal/health"
 	"github.com/adamancini/groovelab/internal/progress"
@@ -149,6 +150,12 @@ func main() {
 			trackHandler.MountAdminRoutes(r)
 		})
 	})
+
+	// Flashcard routes (auth optional -- guests can play without persistence).
+	flashcardStore := flashcards.NewStore(dbPool)
+	flashcardHandler := flashcards.NewHandler(flashcardStore, authSystem.AB)
+	flashcardHandler.MountRoutes(r, "/api/v1/flashcards")
+	log.Println("flashcard routes mounted")
 
 	// Start server.
 	addr := ":8080"
