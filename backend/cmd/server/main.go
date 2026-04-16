@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	grooveauth "github.com/adamancini/groovelab/internal/auth"
 	"github.com/adamancini/groovelab/internal/cache"
 	"github.com/adamancini/groovelab/internal/health"
 	"github.com/go-chi/chi/v5"
@@ -51,6 +52,25 @@ func main() {
 	}()
 	log.Println("connected to Redis")
 
+	// Set up authentication.
+	rootURL := os.Getenv("ROOT_URL")
+	if rootURL == "" {
+		rootURL = "http://localhost:8080"
+	}
+
+	authSystem, err := grooveauth.Setup(grooveauth.Config{
+		RootURL:       rootURL,
+		MountPath:     "/api/v1/auth",
+		Pool:          dbPool,
+		RedisClient:   redisClient,
+		SessionConfig: grooveauth.DefaultSessionConfig(),
+		CookieConfig:  grooveauth.DefaultCookieConfig(),
+	})
+	if err != nil {
+		log.Fatalf("auth setup failed: %v", err)
+	}
+	log.Println("authentication initialized")
+
 	// Build router.
 	version := os.Getenv("APP_VERSION")
 	if version == "" {
@@ -63,6 +83,8 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
+	r.Use(authSystem.LoadClientStateMiddleware())
+	r.Use(authSystem.RememberMiddleware())
 
 	// Health probes (not versioned).
 	r.Get("/healthz", healthHandler.Readiness)
@@ -74,6 +96,20 @@ func main() {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"message":"Groovelab API v1"}`))
+		})
+	})
+
+	// Auth routes: /api/v1/auth/{login,logout,register,me}
+	authSystem.MountRoutes(r, "/api/v1/auth")
+
+	// Protected routes example.
+	r.Route("/api/v1/admin", func(r chi.Router) {
+		r.Use(grooveauth.RequireAuth(authSystem.AB))
+		r.Use(grooveauth.RequireAdmin(authSystem.AB))
+		r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"message":"admin area"}`))
 		})
 	})
 
