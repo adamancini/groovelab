@@ -1,0 +1,16 @@
+{
+  "v1": {
+    "name": "CI Service Account",
+    "resources": {
+      "allowed": [
+        "kots/app/[:appId]/release/**",
+        "kots/app/[:appId]/channel/**",
+        "platform/app/[:appId]/cluster/**"
+      ],
+      "denied": [
+        "kots/app/[:appId]/license/**",
+        "platform/app/[:appId]/customer/**"
+      ]
+    }
+  }
+}
