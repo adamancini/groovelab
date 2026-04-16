@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+/* Class-based dark mode (dark is default). */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ---- Design tokens ---- */
+@theme {
+  /* Background */
+  --color-primary: #1a1a2e;
+  --color-surface: #16213e;
+  --color-elevated: #0f3460;
+
+  /* Text -- used via text-primary, text-secondary */
+  --color-text-primary: #e0e0e0;
+  --color-text-secondary: #a0a0b0;
+
+  /* Accents */
+  --color-accent-primary: #53d8fb;
+  --color-accent-correct: #4ecca3;
+  --color-accent-wrong: #e84545;
+  --color-accent-tonic: #f0a500;
+  --color-accent-locked: #888899;
+
+  /* Typography */
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* Border radius */
+  --radius-lg: 8px;
+}
+
+/* ---- Light mode overrides ---- */
+:root:not(.dark) {
+  --color-primary: #f5f5f5;
+  --color-surface: #ffffff;
+  --color-elevated: #e8e8e8;
+
+  --color-text-primary: #1a1a2e;
+  --color-text-secondary: #555566;
+
+  --color-accent-primary: #0077cc;
+}
+
+/* ---- Base styles ---- */
+html {
+  color-scheme: dark;
+}
+
+html:not(.dark) {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-primary text-text-primary;
+  font-family: system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Respect prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Custom focus rings for interactive elements */
+:focus-visible {
+  outline: 2px solid var(--color-accent-primary);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
