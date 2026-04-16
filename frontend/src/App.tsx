@@ -9,6 +9,7 @@ import Register from "./pages/auth/Register";
 import Placeholder from "./pages/Placeholder";
 import Learn from "./pages/Learn";
 import FlashcardSession from "./pages/FlashcardSession";
+import Play from "./pages/Play";
 
 export default function App() {
   return (
@@ -25,11 +26,8 @@ export default function App() {
                 path="/learn/:topic"
                 element={<FlashcardSession />}
               />
-              <Route path="/play" element={<Placeholder title="Play" />} />
-              <Route
-                path="/play/:id"
-                element={<Placeholder title="Track Playback" />}
-              />
+              <Route path="/play" element={<Play />} />
+              <Route path="/play/:id" element={<Play />} />
               <Route
                 path="/fretboard"
                 element={<Placeholder title="Fretboard" />}

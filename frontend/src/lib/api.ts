@@ -175,3 +175,46 @@ export function submitAnswer(
     }),
   });
 }
+
+// --------------- Track endpoints ---------------
+
+/** Payload for saving a practice track. */
+export interface SaveTrackPayload {
+  chord_sequence: {
+    root: string;
+    type: string;
+    duration_bars: number;
+  }[];
+  drum_pattern: Record<string, boolean[]>;
+  bpm: number;
+  playback_settings: {
+    metronome: boolean;
+    count_in: string;
+    loop_section: string;
+  };
+}
+
+/** Response from POST /api/v1/tracks. */
+export interface Track {
+  id: string;
+  user_id: string;
+  chord_sequence: SaveTrackPayload["chord_sequence"];
+  drum_pattern: Record<string, boolean[]>;
+  bpm: number;
+  playback_settings: SaveTrackPayload["playback_settings"];
+  created_at: string;
+  updated_at: string;
+}
+
+/** POST /api/v1/tracks -- save a practice track. */
+export function saveTrack(payload: SaveTrackPayload): Promise<Track> {
+  return apiRequest<Track>("/tracks", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+/** GET /api/v1/tracks -- list saved tracks. */
+export function fetchTracks(): Promise<Track[]> {
+  return apiRequest<Track[]>("/tracks");
+}
