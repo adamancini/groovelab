@@ -3,6 +3,7 @@ import { AuthProvider } from "./context/AuthContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import NavBar from "./components/NavBar";
 import SkipLink from "./components/SkipLink";
+import UpdateBanner from "./components/UpdateBanner";
 import Home from "./pages/Home";
 import SignIn from "./pages/auth/SignIn";
 import Register from "./pages/auth/Register";
@@ -24,6 +25,7 @@ export default function App() {
       <AuthProvider>
         <BrowserRouter>
           <SkipLink />
+          <UpdateBanner />
           <NavBar />
           <main id="main-content">
             <Routes>

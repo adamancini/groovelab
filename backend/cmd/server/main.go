@@ -16,6 +16,7 @@ import (
 	"github.com/adamancini/groovelab/internal/fretboard"
 	"github.com/adamancini/groovelab/internal/health"
 	"github.com/adamancini/groovelab/internal/progress"
+	"github.com/adamancini/groovelab/internal/replicated"
 	"github.com/adamancini/groovelab/internal/settings"
 	"github.com/adamancini/groovelab/internal/tracks"
 	"github.com/go-chi/chi/v5"
@@ -77,6 +78,12 @@ func main() {
 	}
 	log.Println("authentication initialized")
 
+	// Start Replicated SDK polling client.
+	sdkClient := replicated.NewSDKClient(redisClient, dbPool)
+	sdkClient.Start(ctx)
+	defer sdkClient.Stop()
+	log.Println("replicated SDK polling started")
+
 	// Build router.
 	version := os.Getenv("APP_VERSION")
 	if version == "" {
@@ -84,6 +91,7 @@ func main() {
 	}
 
 	healthHandler := health.NewHandler(dbPool, redisClient, version)
+	replicatedHandler := replicated.NewHandler(redisClient)
 	fretboardHandler := fretboard.NewHandler(dbPool)
 	settingsHandler := settings.NewHandler(dbPool, authSystem.AB)
 	trackHandler := tracks.NewHandler(dbPool, authSystem.AB)
@@ -97,9 +105,18 @@ func main() {
 	r.Use(authSystem.LoadClientStateMiddleware())
 	r.Use(authSystem.RememberMiddleware())
 
+	// License enforcement middleware: blocks expired licenses for authenticated routes.
+	// Exempt: /healthz, /livez, /api/v1/auth/*, /api/replicated/*
+	r.Use(replicated.RequireLicenseValid(redisClient))
+
 	// Health probes (not versioned).
 	r.Get("/healthz", healthHandler.Readiness)
 	r.Get("/livez", healthHandler.Liveness)
+
+	// Replicated SDK proxy routes (no auth required -- frontend fetches these).
+	r.Route("/api/replicated", func(r chi.Router) {
+		replicatedHandler.MountRoutes(r)
+	})
 
 	// Versioned API route group.
 	r.Route("/api/v1", func(r chi.Router) {
@@ -113,6 +130,12 @@ func main() {
 		r.Route("/tracks", func(r chi.Router) {
 			r.Use(grooveauth.RequireAuth(authSystem.AB))
 			trackHandler.MountRoutes(r)
+
+			// Track export: auth + entitlement dual-gate.
+			r.Route("/{id}/export", func(r chi.Router) {
+				r.Use(replicated.RequireEntitlement(redisClient, "track_export_enabled"))
+				r.Get("/", trackHandler.Export)
+			})
 		})
 
 		// Progress and streak tracking (authenticated users only).

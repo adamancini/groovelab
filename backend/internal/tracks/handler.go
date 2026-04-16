@@ -305,6 +305,41 @@ func (h *Handler) MountRoutes(r chi.Router) {
 	r.Delete("/{id}", h.Delete)
 }
 
+// Export handles GET /api/v1/tracks/:id/export -- returns the track data for export.
+// This endpoint is gated by both authentication and the track_export_enabled entitlement.
+func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
+	userID, err := h.currentUserID(r)
+	if err != nil || userID == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	trackID := chi.URLParam(r, "id")
+	if trackID == "" {
+		writeError(w, http.StatusBadRequest, "track id is required")
+		return
+	}
+
+	track, err := h.queries.GetTrackByID(r.Context(), trackID)
+	if err != nil {
+		log.Printf("error getting track for export: %v", err)
+		writeError(w, http.StatusInternalServerError, "failed to get track")
+		return
+	}
+	if track == nil {
+		writeError(w, http.StatusNotFound, "track not found")
+		return
+	}
+
+	// Ownership check: user can only export their own tracks.
+	if track.UserID != userID {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, track)
+}
+
 // MountAdminRoutes mounts admin-only track routes.
 func (h *Handler) MountAdminRoutes(r chi.Router) {
 	r.Get("/", h.ListAll)
