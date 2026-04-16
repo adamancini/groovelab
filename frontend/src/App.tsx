@@ -15,6 +15,8 @@ import Users from "./pages/admin/Users";
 import AdminTracks from "./pages/admin/Tracks";
 import License from "./pages/admin/License";
 import Support from "./pages/admin/Support";
+import FretboardRef from "./pages/FretboardRef";
+import Progress from "./pages/Progress";
 
 export default function App() {
   return (
@@ -36,10 +38,8 @@ export default function App() {
                 path="/play/:id"
                 element={<Placeholder title="Track Playback" />}
               />
-              <Route
-                path="/fretboard"
-                element={<Placeholder title="Fretboard" />}
-              />
+              <Route path="/fretboard" element={<FretboardRef />} />
+              <Route path="/progress" element={<Progress />} />
               <Route path="/auth/signin" element={<SignIn />} />
               <Route path="/auth/register" element={<Register />} />
               <Route
