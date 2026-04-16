@@ -19,6 +19,7 @@ spec:
         app.kubernetes.io/component: backend
         app.kubernetes.io/part-of: groovelab
     spec:
+      {{- include "groovelab.imagePullSecrets" . | nindent 6 }}
       initContainers:
         - name: wait-for-db
           image: busybox:latest

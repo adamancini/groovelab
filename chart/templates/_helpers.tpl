@@ -47,3 +47,38 @@ Selector labels.
 app.kubernetes.io/name: {{ include "groovelab.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
+
+{{/*
+Image pull secrets — merges global.imagePullSecrets, images.pullSecrets,
+and the SDK-managed enterprise-pull-secret when dockerconfigjson is present.
+*/}}
+{{- define "groovelab.imagePullSecrets" -}}
+  {{- $pullSecrets := list }}
+  {{- with ((.Values.global).imagePullSecrets) -}}
+    {{- range . -}}
+      {{- if kindIs "map" . -}}
+        {{- $pullSecrets = append $pullSecrets .name -}}
+      {{- else -}}
+        {{- $pullSecrets = append $pullSecrets . -}}
+      {{- end }}
+    {{- end -}}
+  {{- end -}}
+  {{- with .Values.images -}}
+    {{- range .pullSecrets -}}
+      {{- if kindIs "map" . -}}
+        {{- $pullSecrets = append $pullSecrets .name -}}
+      {{- else -}}
+        {{- $pullSecrets = append $pullSecrets . -}}
+      {{- end -}}
+    {{- end -}}
+  {{- end -}}
+  {{- if hasKey ((.Values.global).replicated) "dockerconfigjson" }}
+    {{- $pullSecrets = append $pullSecrets "enterprise-pull-secret" -}}
+  {{- end -}}
+  {{- if (not (empty $pullSecrets)) -}}
+imagePullSecrets:
+    {{- range $pullSecrets | uniq }}
+  - name: {{ . }}
+    {{- end }}
+  {{- end }}
+{{- end -}}
