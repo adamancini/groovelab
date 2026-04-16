@@ -137,6 +137,31 @@ function createFetchMock(overrides: Record<string, unknown> = {}) {
       });
     }
 
+    // Support bundle generation.
+    if (
+      urlStr.includes("/api/replicated/support-bundle") &&
+      method === "POST" &&
+      !urlStr.includes("/upload")
+    ) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            id: "bundle-test-001",
+          }),
+      });
+    }
+
+    // Support bundle upload.
+    if (urlStr.includes("/upload") && method === "POST") {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ success: true }),
+      });
+    }
+
     // Default: 404.
     return Promise.resolve({
       ok: false,
@@ -484,18 +509,136 @@ describe("Admin Panel", () => {
   });
 
   describe("Support page", () => {
-    it("renders the Support placeholder", async () => {
+    it("renders Generate button and empty bundle history", async () => {
       vi.stubGlobal("fetch", createFetchMock());
       window.history.pushState({}, "", "/admin/support");
 
       render(<App />);
 
-      await screen.findByTestId("support-placeholder");
-      expect(
-        screen.getByText(
-          "Coming soon -- will be connected to Replicated SDK",
-        ),
-      ).toBeInTheDocument();
+      const generateBtn = await screen.findByTestId("generate-bundle-button");
+      expect(generateBtn).toBeInTheDocument();
+      expect(generateBtn).toHaveTextContent("Generate Support Bundle");
+
+      // Bundle history section should exist but be empty.
+      expect(screen.getByTestId("bundle-history")).toBeInTheDocument();
+      expect(screen.getByTestId("no-bundles")).toBeInTheDocument();
+    });
+
+    it("generates a bundle and shows it in history with Download and Upload buttons", async () => {
+      vi.stubGlobal("fetch", createFetchMock());
+      window.history.pushState({}, "", "/admin/support");
+
+      render(<App />);
+
+      const generateBtn = await screen.findByTestId("generate-bundle-button");
+      fireEvent.click(generateBtn);
+
+      // Wait for the bundle to appear in history.
+      const bundleEntry = await screen.findByTestId("bundle-entry-bundle-test-001");
+      expect(bundleEntry).toBeInTheDocument();
+
+      // Should have both Download and Upload buttons.
+      expect(screen.getByTestId("download-bundle-bundle-test-001")).toBeInTheDocument();
+      expect(screen.getByTestId("upload-bundle-bundle-test-001")).toBeInTheDocument();
+
+      // Should show bundle ID and timestamp.
+      expect(screen.getByTestId("bundle-id-bundle-test-001")).toHaveTextContent("bundle-test-001");
+      expect(screen.getByTestId("bundle-timestamp-bundle-test-001")).toBeInTheDocument();
+    });
+
+    it("shows progress indicator while generating", async () => {
+      // Use a fetch mock that delays the support bundle response.
+      let resolveBundle: ((value: unknown) => void) | undefined;
+      const delayedFetchMock = createFetchMock();
+      const originalImpl = delayedFetchMock.getMockImplementation()!;
+      delayedFetchMock.mockImplementation((url: string, options?: RequestInit) => {
+        const urlStr = typeof url === "string" ? url : String(url);
+        const method = options?.method ?? "GET";
+        if (
+          urlStr.includes("/api/replicated/support-bundle") &&
+          method === "POST" &&
+          !urlStr.includes("/upload")
+        ) {
+          return new Promise((resolve) => {
+            resolveBundle = resolve;
+          });
+        }
+        return originalImpl(url, options);
+      });
+      vi.stubGlobal("fetch", delayedFetchMock);
+      window.history.pushState({}, "", "/admin/support");
+
+      render(<App />);
+
+      const generateBtn = await screen.findByTestId("generate-bundle-button");
+      fireEvent.click(generateBtn);
+
+      // Progress indicator should appear.
+      await screen.findByTestId("bundle-progress");
+      expect(screen.getByTestId("bundle-progress")).toBeInTheDocument();
+
+      // Resolve the pending request.
+      resolveBundle!({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ id: "bundle-delayed-001" }),
+      });
+
+      // Progress indicator should disappear and bundle should appear.
+      await waitFor(() => {
+        expect(screen.queryByTestId("bundle-progress")).not.toBeInTheDocument();
+      });
+    });
+
+    it("Download button is always available for air-gap environments", async () => {
+      vi.stubGlobal("fetch", createFetchMock());
+      window.history.pushState({}, "", "/admin/support");
+
+      render(<App />);
+
+      // Generate a bundle first.
+      const generateBtn = await screen.findByTestId("generate-bundle-button");
+      fireEvent.click(generateBtn);
+
+      // Wait for bundle to appear.
+      await screen.findByTestId("bundle-entry-bundle-test-001");
+
+      // Download button should always be present and enabled.
+      const downloadBtn = screen.getByTestId("download-bundle-bundle-test-001");
+      expect(downloadBtn).toBeInTheDocument();
+      expect(downloadBtn).not.toBeDisabled();
+    });
+
+    it("shows error when bundle generation fails", async () => {
+      const failingFetchMock = createFetchMock();
+      const originalImpl = failingFetchMock.getMockImplementation()!;
+      failingFetchMock.mockImplementation((url: string, options?: RequestInit) => {
+        const urlStr = typeof url === "string" ? url : String(url);
+        const method = options?.method ?? "GET";
+        if (
+          urlStr.includes("/api/replicated/support-bundle") &&
+          method === "POST" &&
+          !urlStr.includes("/upload")
+        ) {
+          return Promise.resolve({
+            ok: false,
+            status: 502,
+            json: () => Promise.resolve({ error: "SDK unreachable" }),
+          });
+        }
+        return originalImpl(url, options);
+      });
+      vi.stubGlobal("fetch", failingFetchMock);
+      window.history.pushState({}, "", "/admin/support");
+
+      render(<App />);
+
+      const generateBtn = await screen.findByTestId("generate-bundle-button");
+      fireEvent.click(generateBtn);
+
+      const errorEl = await screen.findByTestId("bundle-error");
+      expect(errorEl).toBeInTheDocument();
+      expect(errorEl).toHaveTextContent("SDK unreachable");
     });
   });
 });

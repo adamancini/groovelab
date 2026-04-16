@@ -110,6 +110,20 @@ func fakeSDKServer(t *testing.T) (*httptest.Server, *fakeSDKState) {
 		_, _ = w.Write([]byte(`{"success": true}`))
 	})
 
+	mux.Post("/api/v1/troubleshoot/supportbundle", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"id":"bundle-fake-001"}`))
+	})
+
+	mux.Get("/api/v1/troubleshoot/supportbundle/{bundleID}/download", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", `attachment; filename="support-bundle.tar.gz"`)
+		w.WriteHeader(http.StatusOK)
+		// Write minimal fake archive data.
+		_, _ = w.Write([]byte("fake-archive-data"))
+	})
+
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 
@@ -455,6 +469,62 @@ func TestSDKGracefulErrorHandling(t *testing.T) {
 	// Redis should be empty since all polls failed.
 	_, err := rdClient.Get(ctx, replicated.KeyLicenseInfo).Result()
 	assert.ErrorIs(t, err, redis.Nil, "license info should not be cached when SDK returns errors")
+}
+
+func TestGenerateSupportBundle_ReturnsID(t *testing.T) {
+	rdClient := testRedis(t)
+	sdkServer, state := fakeSDKServer(t)
+	_ = state
+
+	handler := replicated.NewHandlerWithSDKURL(rdClient, sdkServer.URL)
+	r := chi.NewRouter()
+	handler.MountRoutes(r)
+
+	req := httptest.NewRequest(http.MethodPost, "/support-bundle", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code, "generate bundle should return 200")
+
+	var resp map[string]interface{}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.NotEmpty(t, resp["id"], "response should contain bundle ID")
+}
+
+func TestDownloadSupportBundle_StreamsArchive(t *testing.T) {
+	rdClient := testRedis(t)
+	sdkServer, state := fakeSDKServer(t)
+	_ = state
+
+	handler := replicated.NewHandlerWithSDKURL(rdClient, sdkServer.URL)
+	r := chi.NewRouter()
+	handler.MountRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/support-bundle/bundle-test-123/download", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code, "download should return 200")
+	assert.Contains(t, rec.Header().Get("Content-Disposition"), "support-bundle")
+	assert.True(t, rec.Body.Len() > 0, "response body should contain archive data")
+}
+
+func TestDownloadSupportBundle_MissingID(t *testing.T) {
+	rdClient := testRedis(t)
+	sdkServer, state := fakeSDKServer(t)
+	_ = state
+
+	handler := replicated.NewHandlerWithSDKURL(rdClient, sdkServer.URL)
+	r := chi.NewRouter()
+	handler.MountRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/support-bundle//download", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	// Chi will either return 405 (no matching route) or the handler will reject
+	// with 400. Either way it should not return 200.
+	assert.NotEqual(t, http.StatusOK, rec.Code, "missing bundle ID should not return 200")
 }
 
 func TestValidLicenseAllowsAccess(t *testing.T) {
