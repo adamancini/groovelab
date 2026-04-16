@@ -1,0 +1,377 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write  # Required for Cosign keyless signing via OIDC
+
+env:
+  GHCR_PREFIX: ghcr.io/adamancini
+  APP_SLUG: groovelab
+  HELM_VERSION: "4.1.4"
+  K3S_VERSION: "1.32"
+
+jobs:
+  # ── Build, Push, and Sign Images ─────────────────────────────────────────
+  build-sign:
+    name: Build, Push, and Sign Images
+    runs-on: ubuntu-latest
+    outputs:
+      frontend-digest: ${{ steps.build-frontend.outputs.digest }}
+      backend-digest: ${{ steps.build-backend.outputs.digest }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute version from tag
+        id: meta
+        run: |
+          # Extract version from tag (e.g., v1.2.3 -> v1.2.3)
+          VERSION="${GITHUB_REF_NAME}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend
+        id: build-frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend/
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ steps.meta.outputs.version }}
+            ${{ env.GHCR_PREFIX }}/groovelab-frontend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push backend
+        id: build-backend
+        uses: docker/build-push-action@v6
+        with:
+          context: backend/
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ steps.meta.outputs.version }}
+            ${{ env.GHCR_PREFIX }}/groovelab-backend:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign frontend image
+        run: |
+          cosign sign --yes \
+            "${{ env.GHCR_PREFIX }}/groovelab-frontend@${{ steps.build-frontend.outputs.digest }}"
+
+      - name: Sign backend image
+        run: |
+          cosign sign --yes \
+            "${{ env.GHCR_PREFIX }}/groovelab-backend@${{ steps.build-backend.outputs.digest }}"
+
+  # ── Release to Unstable and Test ─────────────────────────────────────────
+  release-unstable:
+    name: Release to Unstable and Test
+    runs-on: ubuntu-latest
+    needs: build-sign
+    env:
+      REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
+      VERSION: ${{ needs.build-sign.outputs.version }}
+    outputs:
+      release-sequence: ${{ steps.release.outputs.sequence }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install Replicated CLI
+        run: |
+          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
+            | grep "browser_download_url.*linux_amd64.tar.gz" \
+            | cut -d '"' -f 4 \
+            | xargs curl -sL \
+            | tar xz -C /usr/local/bin replicated
+
+      - name: Package and create release on Unstable
+        id: release
+        run: |
+          helm dependency update chart/
+          # Helm v4: extract subchart tarballs
+          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
+
+          RELEASE_OUTPUT=$(replicated release create \
+            --yaml-dir chart/ \
+            --promote Unstable \
+            --version "${{ env.VERSION }}" \
+            --app "${{ env.APP_SLUG }}")
+          echo "$RELEASE_OUTPUT"
+
+          # Extract sequence number for later promotion
+          SEQUENCE=$(echo "$RELEASE_OUTPUT" | awk '/SEQUENCE/{getline; print $1}')
+          echo "sequence=${SEQUENCE}" >> "$GITHUB_OUTPUT"
+          echo "Release created: ${{ env.VERSION }} (sequence: ${SEQUENCE})"
+
+      - name: Provision CMX k3s cluster for install test
+        id: cluster
+        run: |
+          CLUSTER_OUTPUT=$(replicated cluster create \
+            --distribution k3s \
+            --version "${{ env.K3S_VERSION }}" \
+            --name "release-${{ env.VERSION }}" \
+            --ttl 1h \
+            --wait 10m \
+            --app "${{ env.APP_SLUG }}")
+          CLUSTER_ID=$(echo "$CLUSTER_OUTPUT" | awk 'NR==2 {print $1}')
+          echo "id=${CLUSTER_ID}" >> "$GITHUB_OUTPUT"
+          echo "Cluster provisioned: ${CLUSTER_ID}"
+
+      - name: Export kubeconfig
+        run: |
+          replicated cluster kubeconfig "${{ steps.cluster.outputs.id }}" \
+            --app "${{ env.APP_SLUG }}" \
+            --output-path "${{ runner.temp }}/kubeconfig.yaml"
+          echo "KUBECONFIG=${{ runner.temp }}/kubeconfig.yaml" >> "$GITHUB_ENV"
+
+      - name: Install CNPG operator
+        run: |
+          helm dependency update chart/
+          cd chart/charts && for f in cloudnative-pg*.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
+          helm install cnpg-operator chart/charts/cloudnative-pg \
+            --namespace cnpg-system --create-namespace \
+            --wait --timeout 3m
+
+      - name: Create namespace and prerequisites
+        run: |
+          NAMESPACE=groovelab
+          kubectl create namespace "$NAMESPACE"
+
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: groovelab-cnpg-credentials
+            namespace: ${NAMESPACE}
+          type: kubernetes.io/basic-auth
+          stringData:
+            username: groovelab
+            password: ci-test-password
+          EOF
+
+          kubectl apply -f - <<EOF
+          apiVersion: postgresql.cnpg.io/v1
+          kind: Cluster
+          metadata:
+            name: groovelab-postgresql
+            namespace: ${NAMESPACE}
+          spec:
+            instances: 1
+            bootstrap:
+              initdb:
+                database: groovelab
+                owner: groovelab
+                secret:
+                  name: groovelab-cnpg-credentials
+            storage:
+              size: 1Gi
+          EOF
+
+          echo "Waiting for CNPG Cluster to become ready..."
+          kubectl wait --for=condition=Ready cluster/groovelab-postgresql \
+            -n "${NAMESPACE}" --timeout=5m
+
+          kubectl apply -f - <<EOF
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: groovelab-postgresql
+            namespace: ${NAMESPACE}
+          spec:
+            type: ExternalName
+            externalName: groovelab-postgresql-rw.${NAMESPACE}.svc.cluster.local
+            ports:
+              - port: 5432
+                targetPort: 5432
+          EOF
+
+          kubectl create secret docker-registry ghcr-credentials \
+            --docker-server=ghcr.io \
+            --docker-username="${{ github.actor }}" \
+            --docker-password="${{ secrets.GITHUB_TOKEN }}" \
+            --namespace "$NAMESPACE"
+
+      - name: Install test (fresh install)
+        run: |
+          NAMESPACE=groovelab
+          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true; done && cd ../..
+
+          helm install groovelab chart/ \
+            --namespace "$NAMESPACE" \
+            --set image.frontend.repository="${{ env.GHCR_PREFIX }}/groovelab-frontend" \
+            --set image.frontend.tag="${{ env.VERSION }}" \
+            --set image.backend.repository="${{ env.GHCR_PREFIX }}/groovelab-backend" \
+            --set image.backend.tag="${{ env.VERSION }}" \
+            --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
+            --set global.replicated.dockerconfigjson=null \
+            --set cert-manager.enabled=false \
+            --set cloudnative-pg.enabled=false \
+            --set replicated.enabled=false
+
+      - name: Wait for pods to be ready
+        run: |
+          NAMESPACE=groovelab
+          DEADLINE=$(($(date +%s) + 300))
+          while true; do
+            echo "[$(date +%H:%M:%S)] Pod status:"
+            kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null || true
+            NOT_READY=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+              | grep -v -E "Running|Completed" || true)
+            [ -z "$NOT_READY" ] && break
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "TIMEOUT: pods not ready after 5 minutes"
+              kubectl describe pods -n "$NAMESPACE" 2>/dev/null | tail -60
+              exit 1
+            fi
+            sleep 15
+          done
+          echo "All pods running."
+
+      - name: Verify /healthz returns 200 (install test)
+        run: |
+          NAMESPACE=groovelab
+          kubectl port-forward svc/groovelab-backend 18080:8080 -n "$NAMESPACE" &
+          PF_PID=$!
+          sleep 5
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18080/healthz)
+          kill "$PF_PID" 2>/dev/null || true
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "FAIL: /healthz returned HTTP ${HTTP_CODE}, expected 200"
+            exit 1
+          fi
+          echo "PASS: install test /healthz returned HTTP 200"
+
+      - name: Upgrade test (helm upgrade in-place)
+        run: |
+          NAMESPACE=groovelab
+          # Re-run helm upgrade with same version to validate upgrade path
+          helm upgrade groovelab chart/ \
+            --namespace "$NAMESPACE" \
+            --set image.frontend.repository="${{ env.GHCR_PREFIX }}/groovelab-frontend" \
+            --set image.frontend.tag="${{ env.VERSION }}" \
+            --set image.backend.repository="${{ env.GHCR_PREFIX }}/groovelab-backend" \
+            --set image.backend.tag="${{ env.VERSION }}" \
+            --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
+            --set global.replicated.dockerconfigjson=null \
+            --set cert-manager.enabled=false \
+            --set cloudnative-pg.enabled=false \
+            --set replicated.enabled=false
+
+          # Wait for rollout
+          DEADLINE=$(($(date +%s) + 300))
+          while true; do
+            NOT_READY=$(kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+              | grep -v -E "Running|Completed" || true)
+            [ -z "$NOT_READY" ] && break
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "TIMEOUT: pods not ready after upgrade"
+              kubectl describe pods -n "$NAMESPACE" 2>/dev/null | tail -60
+              exit 1
+            fi
+            sleep 15
+          done
+
+      - name: Verify /healthz returns 200 (upgrade test)
+        run: |
+          NAMESPACE=groovelab
+          kubectl port-forward svc/groovelab-backend 18081:8080 -n "$NAMESPACE" &
+          PF_PID=$!
+          sleep 5
+
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18081/healthz)
+          kill "$PF_PID" 2>/dev/null || true
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "FAIL: /healthz returned HTTP ${HTTP_CODE} after upgrade, expected 200"
+            exit 1
+          fi
+          echo "PASS: upgrade test /healthz returned HTTP 200"
+
+      - name: Tear down CMX cluster
+        if: always()
+        run: |
+          if [ -n "${{ steps.cluster.outputs.id }}" ]; then
+            replicated cluster rm "${{ steps.cluster.outputs.id }}" \
+              --app "${{ env.APP_SLUG }}" || true
+            echo "Cluster removal requested."
+          fi
+
+  # ── Promote to Stable ────────────────────────────────────────────────────
+  promote-stable:
+    name: Promote to Stable
+    runs-on: ubuntu-latest
+    needs: [build-sign, release-unstable]
+    # Manual gate: requires approval via GitHub Environment protection rules.
+    # Configure "production" environment in repo Settings > Environments with
+    # required reviewers. The email notification for Stable promotion is
+    # configured in the Replicated Vendor Portal (Settings > Notifications).
+    environment: production
+    env:
+      REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
+      VERSION: ${{ needs.build-sign.outputs.version }}
+    steps:
+      - name: Install Replicated CLI
+        run: |
+          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
+            | grep "browser_download_url.*linux_amd64.tar.gz" \
+            | cut -d '"' -f 4 \
+            | xargs curl -sL \
+            | tar xz -C /usr/local/bin replicated
+
+      - name: Promote release to Stable
+        run: |
+          SEQUENCE="${{ needs.release-unstable.outputs.release-sequence }}"
+          replicated release promote "${SEQUENCE}" Stable \
+            --version "${{ env.VERSION }}" \
+            --app "${{ env.APP_SLUG }}"
+          echo "Release ${{ env.VERSION }} (sequence ${SEQUENCE}) promoted to Stable."
+          echo ""
+          echo "Email notification will be sent to configured recipients in the"
+          echo "Replicated Vendor Portal (Settings > Notifications)."
+
+      - name: Document Cosign verification command
+        run: |
+          echo "================================================================"
+          echo "To verify image signatures for this release:"
+          echo ""
+          echo "  cosign verify \\"
+          echo "    --certificate-identity-regexp='https://github.com/adamancini/groovelab/' \\"
+          echo "    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \\"
+          echo "    ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ env.VERSION }}"
+          echo ""
+          echo "  cosign verify \\"
+          echo "    --certificate-identity-regexp='https://github.com/adamancini/groovelab/' \\"
+          echo "    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \\"
+          echo "    ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ env.VERSION }}"
+          echo "================================================================"
