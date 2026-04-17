@@ -11,16 +11,15 @@ export interface AuthError {
   error: string;
 }
 
-/** A topic in the flashcard system with mastery information. */
+/** A topic in the flashcard system with optional mastery information. */
 export interface FlashcardTopic {
-  id: string;
-  name: string;
-  /** Number of keys mastered (0-12). */
-  keys_mastered: number;
-  /** Total possible keys (always 12). */
-  keys_total: number;
-  /** Accuracy percentage 0-100. */
-  accuracy: number;
+  /** Slug identifier, e.g. "major_chords". */
+  topic: string;
+  card_count: number;
+  /** Average card accuracy (0.0–1.0). Only present for authenticated users. */
+  mastery_pct?: number;
+  /** Number of distinct cards practiced. Only present for authenticated users. */
+  practiced_count?: number;
 }
 
 /** A single flashcard in a session. */

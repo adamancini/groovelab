@@ -60,41 +60,38 @@ export default function Learn() {
           className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
           data-testid="topic-grid"
         >
-          {topics.map((topic) => (
+          {topics.map((topic) => {
+            const displayName = topic.topic
+              .replace(/_/g, " ")
+              .replace(/\b\w/g, (c) => c.toUpperCase());
+            const accuracyPct = topic.mastery_pct != null
+              ? Math.round(topic.mastery_pct * 100)
+              : null;
+            const practiced = topic.practiced_count ?? 0;
+            return (
             <Link
-              key={topic.id}
-              to={`/learn/${encodeURIComponent(topic.id)}`}
+              key={topic.topic}
+              to={`/learn/${encodeURIComponent(topic.topic)}`}
               className="bg-elevated rounded-lg border border-white/10 p-5 transition-colors hover:border-accent-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
-              data-testid={`topic-card-${topic.id}`}
+              data-testid={`topic-card-${topic.topic}`}
             >
               <h2 className="text-text-primary text-lg font-semibold">
-                {topic.name}
+                {displayName}
               </h2>
 
-              {/* Mastery dots */}
-              <div
-                className="mt-3 flex gap-1"
-                aria-label={`${topic.keys_mastered} of ${topic.keys_total} keys mastered`}
-              >
-                {Array.from({ length: topic.keys_total }, (_, i) => (
-                  <span
-                    key={i}
-                    className={`inline-block h-2 w-2 rounded-full ${
-                      i < topic.keys_mastered
-                        ? "bg-accent-correct"
-                        : "bg-accent-locked/40"
-                    }`}
-                    aria-hidden="true"
-                  />
-                ))}
-              </div>
+              {/* Card count / progress */}
+              <p className="text-text-secondary mt-1 text-xs">
+                {topic.card_count} cards
+                {practiced > 0 && ` · ${practiced} practiced`}
+              </p>
 
-              {/* Accuracy */}
+              {/* Accuracy — only shown once user has practiced */}
               <p className="text-text-secondary mt-2 text-sm">
-                {topic.accuracy}% accuracy
+                {accuracyPct !== null ? `${accuracyPct}% accuracy` : "Not started"}
               </p>
             </Link>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
