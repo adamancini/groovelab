@@ -22,16 +22,112 @@ export interface FlashcardTopic {
   practiced_count?: number;
 }
 
-/** A single flashcard in a session. */
+/** A single flashcard in a session (frontend view — transformed from raw backend). */
 export interface Flashcard {
   id: string;
+  /** Human-readable prompt text, extracted from the backend question object. */
   question: string;
   /** Mastery stage: 0=4-choice, 1=3-choice, 2=typed, 3=fretboard. */
   stage: 0 | 1 | 2 | 3;
-  /** Options for multiple choice stages (0 and 1). */
+  /** Shuffled display strings for multiple choice stages (0 and 1). */
   options?: string[];
   /** Fretboard positions for stage 3 display. */
   fretboard_positions?: FretboardPosition[];
+  /** Which answer field to submit ("notes" | "name"). Derived from card direction. */
+  _answerKey: string;
+  /** Maps each display option string to the JSON answer payload to POST. */
+  _optionAnswers: Record<string, string>;
+}
+
+// --------------- Raw backend wire types (not exported) ---------------
+
+interface RawAnswerData {
+  name?: string;
+  notes?: string;
+  [key: string]: unknown;
+}
+
+interface RawSessionCard {
+  id: string;
+  direction: string;
+  question: { prompt: string; display_name?: string };
+  correct_answer: RawAnswerData;
+  distractors?: RawAnswerData[];
+  stage: number;
+  options: number; // count, NOT an array
+}
+
+interface RawSessionResponse {
+  session_id: string;
+  topic: string;
+  cards: RawSessionCard[];
+  total: number;
+}
+
+interface RawAnswerResponse {
+  correct: boolean;
+  correct_answer: RawAnswerData;
+  explanation: string;
+  next_card?: RawSessionCard;
+  session_progress: { answered: number; total: number; correct: number; incorrect: number };
+}
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+function transformSessionCard(raw: RawSessionCard): Flashcard {
+  const questionText = raw.question.prompt;
+  // name_to_notes: options are notes strings; notes_to_name: options are name strings.
+  const answerKey: string = raw.direction === "notes_to_name" ? "name" : "notes";
+
+  const optionAnswers: Record<string, string> = {};
+  const labels: string[] = [];
+
+  const addOption = (d: RawAnswerData) => {
+    const label = (d[answerKey] as string | undefined) ?? d.name ?? d.notes ?? JSON.stringify(d);
+    optionAnswers[label] = JSON.stringify(d);
+    labels.push(label);
+  };
+
+  addOption(raw.correct_answer);
+  for (const d of (raw.distractors ?? []).slice(0, raw.options - 1)) addOption(d);
+
+  const shuffled = shuffle(labels);
+  const stage = Math.min(Math.max(raw.stage, 0), 3) as 0 | 1 | 2 | 3;
+
+  return {
+    id: raw.id,
+    question: questionText,
+    stage,
+    options: stage <= 1 ? shuffled : undefined,
+    _answerKey: answerKey,
+    _optionAnswers: optionAnswers,
+  };
+}
+
+function transformAnswerResponse(raw: RawAnswerResponse): AnswerResult {
+  const ca = raw.correct_answer;
+  const caDisplay = (ca?.notes as string | undefined) ?? (ca?.name as string | undefined) ?? JSON.stringify(ca);
+  return {
+    correct: raw.correct,
+    correct_answer: caDisplay,
+    explanation: raw.explanation ?? "",
+    next_card: raw.next_card ? transformSessionCard(raw.next_card) : null,
+    session_progress: {
+      answered: raw.session_progress?.answered ?? 0,
+      total: raw.session_progress?.total ?? 0,
+      correct: raw.session_progress?.correct ?? 0,
+      streak: 0,
+      new_cards: 0,
+      review_cards: 0,
+    },
+  };
 }
 
 /** A position on the fretboard. */
@@ -153,26 +249,35 @@ export function fetchTopics(): Promise<FlashcardTopic[]> {
 }
 
 /** GET /api/v1/flashcards/session?topic=TOPIC -- start or resume a session. */
-export function fetchSession(topic: string): Promise<FlashcardSession> {
-  return apiRequest<FlashcardSession>(
+export async function fetchSession(topic: string): Promise<FlashcardSession> {
+  const raw = await apiRequest<RawSessionResponse>(
     `/flashcards/session?topic=${encodeURIComponent(topic)}`,
   );
+  return {
+    session_id: raw.session_id,
+    topic: raw.topic,
+    cards: raw.cards.map(transformSessionCard),
+  };
 }
 
-/** POST /api/v1/flashcards/answer -- submit an answer. */
-export function submitAnswer(
+/** POST /api/v1/flashcards/answer -- submit an answer.
+ *  answerJson: the JSON-serialised answer payload built by the caller from
+ *  Flashcard._optionAnswers (MC) or Flashcard._answerKey (typed/fretboard).
+ */
+export async function submitAnswer(
   cardId: string,
-  answer: string,
+  answerJson: string,
   inputMethod: "multiple_choice" | "typed" | "fretboard",
 ): Promise<AnswerResult> {
-  return apiRequest<AnswerResult>("/flashcards/answer", {
+  const raw = await apiRequest<RawAnswerResponse>("/flashcards/answer", {
     method: "POST",
     body: JSON.stringify({
       card_id: cardId,
-      answer,
+      answer: JSON.parse(answerJson),
       input_method: inputMethod,
     }),
   });
+  return transformAnswerResponse(raw);
 }
 
 // --------------- Fretboard endpoints ---------------

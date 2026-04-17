@@ -94,17 +94,22 @@ export default function FlashcardSession() {
   );
 
   const handleMultipleChoiceSelect = useCallback(
-    (answer: string) => {
-      handleAnswer(answer, "multiple_choice");
+    (option: string) => {
+      // _optionAnswers maps the display label → JSON answer payload the backend expects.
+      const answerJson =
+        currentCard?._optionAnswers?.[option] ?? JSON.stringify({ notes: option });
+      handleAnswer(answerJson, "multiple_choice");
     },
-    [handleAnswer],
+    [handleAnswer, currentCard],
   );
 
   const handleTypedSubmit = useCallback(
     (answer: string) => {
-      handleAnswer(answer, "typed");
+      // _answerKey is "name" or "notes" depending on card direction.
+      const key = currentCard?._answerKey ?? "notes";
+      handleAnswer(JSON.stringify({ [key]: answer }), "typed");
     },
-    [handleAnswer],
+    [handleAnswer, currentCard],
   );
 
   const handleFretboardSubmit = useCallback(
