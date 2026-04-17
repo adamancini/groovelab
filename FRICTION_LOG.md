@@ -259,3 +259,11 @@ The CLI (`replicated customer update --kots-install=false --channel ... --email 
 **Actual:** `text-primary` maps to `--color-primary` which is the BACKGROUND color (`#1a1a2e` in dark mode — near-black). All headings and text using `text-primary` were invisible against the dark background. The design system defined separate tokens: `--color-primary` for backgrounds and `--color-text-primary` for text, generating `bg-primary`/`text-primary` and `text-text-primary` respectively. The comment in `index.css` (`/* Text -- used via text-primary, text-secondary */`) was misleading — it implied `text-primary` was the text utility, when the actual text utility is `text-text-primary`. The mismatch was introduced during the initial component authoring.
 **Resolution:** Globally replaced `text-primary` → `text-text-primary` and `text-secondary` → `text-text-secondary` across 19 TSX files, and updated the CSS comment. ~20 minutes identifying root cause, ~5 minutes to fix.
 **Severity:** blocker
+
+## Entry 23 — 2026-04-17 — annoyance
+
+**Trying to:** Display topic cards on the Learn page with topic names and card counts.
+**Expected:** Each card to show a human-readable topic name (e.g., "Major Chords") and progress info.
+**Actual:** Cards showed blank headings and "% accuracy" (rendering `undefined` for missing fields). The frontend `FlashcardTopic` interface was designed with `{id, name, keys_mastered, keys_total, accuracy}` but the backend `TopicSummary` struct serializes as `{topic, card_count, mastery_pct?, practiced_count?}`. TypeScript's structural typing doesn't catch this at runtime — the mis-typed JSON silently deserialized into an object where every accessed field was `undefined`.
+**Resolution:** Updated `FlashcardTopic` to match the actual backend wire format. Derived human-readable name from the slug in the component. ~20 minutes to identify root cause via direct `curl` of the API endpoint.
+**Severity:** annoyance
