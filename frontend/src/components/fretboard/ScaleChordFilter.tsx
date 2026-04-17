@@ -53,7 +53,7 @@ export default function ScaleChordFilter({
       <div>
         <label
           htmlFor="scale-chord-select"
-          className="text-secondary mb-1 block text-xs font-medium uppercase tracking-wide"
+          className="text-text-secondary mb-1 block text-xs font-medium uppercase tracking-wide"
         >
           Scale / Chord
         </label>
@@ -61,7 +61,7 @@ export default function ScaleChordFilter({
           id="scale-chord-select"
           value={selectedDef?.name ?? ""}
           onChange={(e) => handleDefChange(e.target.value)}
-          className="bg-elevated text-primary rounded border border-white/10 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+          className="bg-elevated text-text-primary rounded border border-white/10 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
           data-testid="scale-chord-select"
         >
           <option value="">None</option>
@@ -86,7 +86,7 @@ export default function ScaleChordFilter({
       <div>
         <label
           htmlFor="key-select"
-          className="text-secondary mb-1 block text-xs font-medium uppercase tracking-wide"
+          className="text-text-secondary mb-1 block text-xs font-medium uppercase tracking-wide"
         >
           Key
         </label>
@@ -94,7 +94,7 @@ export default function ScaleChordFilter({
           id="key-select"
           value={selectedKey}
           onChange={(e) => onKeyChange(e.target.value)}
-          className="bg-elevated text-primary rounded border border-white/10 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+          className="bg-elevated text-text-primary rounded border border-white/10 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
           data-testid="key-select"
         >
           {CHROMATIC_NOTES.map((note) => (

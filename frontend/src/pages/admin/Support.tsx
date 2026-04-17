@@ -87,7 +87,7 @@ export default function Support() {
 
   return (
     <div>
-      <h1 className="text-primary mb-6 text-2xl font-bold">Support</h1>
+      <h1 className="text-text-primary mb-6 text-2xl font-bold">Support</h1>
 
       <div className="space-y-6">
         {/* Generate bundle section */}
@@ -95,10 +95,10 @@ export default function Support() {
           className="bg-surface rounded-lg border border-white/10 p-6"
           data-testid="support-generate-section"
         >
-          <h2 className="text-primary mb-2 text-lg font-semibold">
+          <h2 className="text-text-primary mb-2 text-lg font-semibold">
             Support Bundle
           </h2>
-          <p className="text-secondary mb-4 text-sm">
+          <p className="text-text-secondary mb-4 text-sm">
             Generate a support bundle to collect diagnostic information about
             your installation. You can download it locally or upload it to the
             Vendor Portal for analysis.
@@ -121,7 +121,7 @@ export default function Support() {
               data-testid="bundle-progress"
             >
               <div className="h-4 w-4 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
-              <span className="text-secondary text-sm">
+              <span className="text-text-secondary text-sm">
                 Collecting diagnostic information...
               </span>
             </div>
@@ -143,12 +143,12 @@ export default function Support() {
           className="bg-surface rounded-lg border border-white/10 p-6"
           data-testid="bundle-history"
         >
-          <h2 className="text-primary mb-4 text-lg font-semibold">
+          <h2 className="text-text-primary mb-4 text-lg font-semibold">
             Bundle History
           </h2>
 
           {bundles.length === 0 ? (
-            <p className="text-secondary text-sm" data-testid="no-bundles">
+            <p className="text-text-secondary text-sm" data-testid="no-bundles">
               No support bundles have been generated yet.
             </p>
           ) : (
@@ -161,13 +161,13 @@ export default function Support() {
                 >
                   <div>
                     <p
-                      className="text-primary font-mono text-sm"
+                      className="text-text-primary font-mono text-sm"
                       data-testid={`bundle-id-${bundle.id}`}
                     >
                       {bundle.id}
                     </p>
                     <p
-                      className="text-secondary text-xs"
+                      className="text-text-secondary text-xs"
                       data-testid={`bundle-timestamp-${bundle.id}`}
                     >
                       {new Date(bundle.timestamp).toLocaleString()}

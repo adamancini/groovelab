@@ -43,8 +43,8 @@ export default function Updates() {
   if (loading) {
     return (
       <div>
-        <h1 className="text-primary mb-6 text-2xl font-bold">Updates</h1>
-        <p className="text-secondary">Checking for updates...</p>
+        <h1 className="text-text-primary mb-6 text-2xl font-bold">Updates</h1>
+        <p className="text-text-secondary">Checking for updates...</p>
       </div>
     );
   }
@@ -52,8 +52,8 @@ export default function Updates() {
   if (error) {
     return (
       <div>
-        <h1 className="text-primary mb-6 text-2xl font-bold">Updates</h1>
-        <p className="text-secondary" data-testid="updates-error">
+        <h1 className="text-text-primary mb-6 text-2xl font-bold">Updates</h1>
+        <p className="text-text-secondary" data-testid="updates-error">
           Unable to check for updates. The SDK may not be available yet.
         </p>
       </div>
@@ -64,7 +64,7 @@ export default function Updates() {
 
   return (
     <div>
-      <h1 className="text-primary mb-6 text-2xl font-bold">Updates</h1>
+      <h1 className="text-text-primary mb-6 text-2xl font-bold">Updates</h1>
 
       <div className="space-y-6">
         {/* Current version */}
@@ -72,9 +72,9 @@ export default function Updates() {
           className="bg-surface rounded-lg border border-white/10 p-6"
           data-testid="current-version-card"
         >
-          <p className="text-secondary text-sm">Current Version</p>
+          <p className="text-text-secondary text-sm">Current Version</p>
           <p
-            className="text-primary text-lg font-mono font-semibold"
+            className="text-text-primary text-lg font-mono font-semibold"
             data-testid="current-version"
           >
             v{CURRENT_VERSION}
@@ -89,7 +89,7 @@ export default function Updates() {
           >
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-secondary text-sm">Available Update</p>
+                <p className="text-text-secondary text-sm">Available Update</p>
                 <p
                   className="text-accent-primary text-lg font-mono font-semibold"
                   data-testid="available-version"
@@ -112,10 +112,10 @@ export default function Updates() {
                 className="mt-4 rounded-lg bg-black/20 p-4"
                 data-testid="upgrade-command"
               >
-                <p className="text-secondary mb-2 text-xs">
+                <p className="text-text-secondary mb-2 text-xs">
                   Run the following command to upgrade:
                 </p>
-                <code className="text-primary block break-all font-mono text-sm">
+                <code className="text-text-primary block break-all font-mono text-sm">
                   helm upgrade groovelab oci://registry.replicated.com/groovelab/groovelab
                   --version {update.versionLabel}
                 </code>
@@ -127,7 +127,7 @@ export default function Updates() {
             className="bg-surface rounded-lg border border-white/10 p-6"
             data-testid="no-updates-card"
           >
-            <p className="text-secondary text-sm">
+            <p className="text-text-secondary text-sm">
               You are running the latest version. No updates available.
             </p>
           </div>

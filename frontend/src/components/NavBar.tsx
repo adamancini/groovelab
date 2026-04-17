@@ -56,7 +56,7 @@ export default function NavBar() {
             <li key={link.to}>
               <Link
                 to={link.to}
-                className="text-secondary hover:text-primary transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary rounded px-1"
+                className="text-text-secondary hover:text-text-primary transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary rounded px-1"
               >
                 {link.label}
               </Link>
@@ -71,7 +71,7 @@ export default function NavBar() {
             type="button"
             onClick={toggleTheme}
             aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
-            className="text-secondary hover:text-primary rounded p-1 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            className="text-text-secondary hover:text-text-primary rounded p-1 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
           >
             {theme === "dark" ? (
               <svg
@@ -114,14 +114,14 @@ export default function NavBar() {
                   className="bg-elevated absolute right-0 mt-2 w-56 rounded-lg border border-white/10 py-2 shadow-lg"
                   role="menu"
                 >
-                  <p className="text-secondary truncate px-4 py-1 text-sm">
+                  <p className="text-text-secondary truncate px-4 py-1 text-sm">
                     {user.email}
                   </p>
                   <hr className="my-1 border-white/10" />
                   <Link
                     to="/settings"
                     role="menuitem"
-                    className="text-primary block px-4 py-2 text-sm hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+                    className="text-text-primary block px-4 py-2 text-sm hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
                     onClick={() => setAvatarOpen(false)}
                   >
                     Settings
@@ -130,7 +130,7 @@ export default function NavBar() {
                     <Link
                       to="/admin"
                       role="menuitem"
-                      className="text-primary block px-4 py-2 text-sm hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+                      className="text-text-primary block px-4 py-2 text-sm hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
                       onClick={() => setAvatarOpen(false)}
                     >
                       Admin Panel
@@ -140,7 +140,7 @@ export default function NavBar() {
                     type="button"
                     role="menuitem"
                     onClick={handleSignOut}
-                    className="text-primary block w-full px-4 py-2 text-left text-sm hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+                    className="text-text-primary block w-full px-4 py-2 text-left text-sm hover:bg-white/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
                   >
                     Sign out
                   </button>
@@ -162,7 +162,7 @@ export default function NavBar() {
             onClick={() => setMobileOpen((o) => !o)}
             aria-expanded={mobileOpen}
             aria-label="Toggle navigation menu"
-            className="text-secondary hover:text-primary ml-1 rounded p-1 transition-colors md:hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            className="text-text-secondary hover:text-text-primary ml-1 rounded p-1 transition-colors md:hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
             data-testid="hamburger-button"
           >
             <svg
@@ -197,7 +197,7 @@ export default function NavBar() {
             <li key={link.to}>
               <Link
                 to={link.to}
-                className="text-secondary hover:text-primary block py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary rounded"
+                className="text-text-secondary hover:text-text-primary block py-2 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary rounded"
                 onClick={() => setMobileOpen(false)}
               >
                 {link.label}

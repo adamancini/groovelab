@@ -126,7 +126,7 @@ export default function TuningConfigurator({
     >
       {/* String count toggle */}
       <fieldset>
-        <legend className="text-secondary mb-1 text-xs font-medium uppercase tracking-wide">
+        <legend className="text-text-secondary mb-1 text-xs font-medium uppercase tracking-wide">
           Strings
         </legend>
         <div className="flex gap-1" role="radiogroup" aria-label="String count">
@@ -140,7 +140,7 @@ export default function TuningConfigurator({
               className={`rounded px-3 py-1.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary ${
                 stringCount === count
                   ? "bg-accent-primary text-black"
-                  : "bg-elevated text-secondary hover:text-primary"
+                  : "bg-elevated text-text-secondary hover:text-text-primary"
               }`}
               data-testid={`string-count-${count}`}
             >
@@ -154,7 +154,7 @@ export default function TuningConfigurator({
       <div>
         <label
           htmlFor="tuning-preset"
-          className="text-secondary mb-1 block text-xs font-medium uppercase tracking-wide"
+          className="text-text-secondary mb-1 block text-xs font-medium uppercase tracking-wide"
         >
           Tuning
         </label>
@@ -162,7 +162,7 @@ export default function TuningConfigurator({
           id="tuning-preset"
           value={isCustom ? CUSTOM_ID : selectedPresetId}
           onChange={(e) => handlePresetChange(e.target.value)}
-          className="bg-elevated text-primary rounded border border-white/10 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+          className="bg-elevated text-text-primary rounded border border-white/10 px-3 py-1.5 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
           data-testid="tuning-preset-select"
         >
           {filteredPresets.map((p) => (
@@ -173,7 +173,7 @@ export default function TuningConfigurator({
           <option value={CUSTOM_ID}>Custom</option>
         </select>
         {!apiLoaded && (
-          <span className="text-secondary ml-2 text-xs" aria-live="polite">
+          <span className="text-text-secondary ml-2 text-xs" aria-live="polite">
             (using defaults)
           </span>
         )}
@@ -182,20 +182,20 @@ export default function TuningConfigurator({
       {/* Custom per-string tuning */}
       {isCustom && (
         <fieldset data-testid="custom-tuning-controls">
-          <legend className="text-secondary mb-1 text-xs font-medium uppercase tracking-wide">
+          <legend className="text-text-secondary mb-1 text-xs font-medium uppercase tracking-wide">
             Custom Tuning
           </legend>
           <div className="flex gap-2">
             {tuning.map((note, idx) => (
               <div key={idx} className="flex flex-col items-center gap-0.5">
-                <span className="text-secondary text-xs">
+                <span className="text-text-secondary text-xs">
                   S{idx + 1}
                 </span>
                 <select
                   aria-label={`String ${idx + 1} note`}
                   value={note}
                   onChange={(e) => handleCustomNoteChange(idx, e.target.value)}
-                  className="bg-elevated text-primary rounded border border-white/10 px-1.5 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+                  className="bg-elevated text-text-primary rounded border border-white/10 px-1.5 py-1 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
                   data-testid={`custom-note-${idx}`}
                 >
                   {CHROMATIC_NOTES.map((n) => (

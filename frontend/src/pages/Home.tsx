@@ -8,7 +8,7 @@ export default function Home() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <p className="text-secondary animate-pulse text-lg">Loading...</p>
+        <p className="text-text-secondary animate-pulse text-lg">Loading...</p>
       </div>
     );
   }
@@ -23,7 +23,7 @@ export default function Home() {
 function AuthenticatedHome({ email }: { email: string }) {
   return (
     <div className="mx-auto max-w-4xl px-4 py-12">
-      <h1 className="text-primary text-3xl font-bold">
+      <h1 className="text-text-primary text-3xl font-bold">
         Welcome back, {email.split("@")[0]}
       </h1>
 
@@ -32,8 +32,8 @@ function AuthenticatedHome({ email }: { email: string }) {
         aria-label="Progress summary"
         className="bg-elevated mt-8 rounded-lg border border-white/10 p-6"
       >
-        <h2 className="text-primary text-lg font-semibold">Your Progress</h2>
-        <p className="text-secondary mt-2 text-sm">
+        <h2 className="text-text-primary text-lg font-semibold">Your Progress</h2>
+        <p className="text-text-secondary mt-2 text-sm">
           Progress data will appear here once you start learning.
         </p>
       </section>
@@ -48,7 +48,7 @@ function AuthenticatedHome({ email }: { email: string }) {
         </Link>
         <Link
           to="/play"
-          className="bg-elevated text-primary hover:bg-elevated/80 inline-flex items-center rounded-lg border border-white/10 px-6 py-3 font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+          className="bg-elevated text-text-primary hover:bg-elevated/80 inline-flex items-center rounded-lg border border-white/10 px-6 py-3 font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
         >
           Open Play Mode
         </Link>
@@ -60,10 +60,10 @@ function AuthenticatedHome({ email }: { email: string }) {
 function GuestHome() {
   return (
     <div className="mx-auto max-w-4xl px-4 py-12">
-      <h1 className="text-primary text-3xl font-bold">
+      <h1 className="text-text-primary text-3xl font-bold">
         Welcome to Groovelab
       </h1>
-      <p className="text-secondary mt-4 max-w-2xl text-lg">
+      <p className="text-text-secondary mt-4 max-w-2xl text-lg">
         Learn music theory through interactive flashcards, build custom practice
         tracks, and explore the fretboard -- all in one place.
       </p>
@@ -92,18 +92,18 @@ function GuestHome() {
             to={f.to}
             className="bg-elevated rounded-lg border border-white/10 p-6 transition-colors hover:border-accent-primary/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
           >
-            <h2 className="text-primary text-lg font-semibold">{f.title}</h2>
-            <p className="text-secondary mt-2 text-sm">{f.desc}</p>
+            <h2 className="text-text-primary text-lg font-semibold">{f.title}</h2>
+            <p className="text-text-secondary mt-2 text-sm">{f.desc}</p>
           </Link>
         ))}
       </div>
 
       {/* Sign in prompt (non-modal) */}
       <section className="bg-elevated mt-12 rounded-lg border border-white/10 p-6 text-center">
-        <p className="text-primary text-lg font-medium">
+        <p className="text-text-primary text-lg font-medium">
           Sign in to track your progress
         </p>
-        <p className="text-secondary mt-1 text-sm">
+        <p className="text-text-secondary mt-1 text-sm">
           Your learning data stays with your account across devices.
         </p>
         <Link

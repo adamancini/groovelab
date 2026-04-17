@@ -24,7 +24,7 @@ export default function NoteInfoPanel({
         aria-label="Note information"
         data-testid="note-info-panel"
       >
-        <p className="text-secondary text-sm">
+        <p className="text-text-secondary text-sm">
           Tap a note on the fretboard to see details
         </p>
       </div>
@@ -43,11 +43,11 @@ export default function NoteInfoPanel({
     >
       <div className="flex items-center gap-6">
         <div>
-          <span className="text-secondary text-xs font-medium uppercase tracking-wide">
+          <span className="text-text-secondary text-xs font-medium uppercase tracking-wide">
             Note
           </span>
           <p
-            className="text-primary text-2xl font-bold"
+            className="text-text-primary text-2xl font-bold"
             data-testid="tapped-note-name"
           >
             {tappedNote}
@@ -55,11 +55,11 @@ export default function NoteInfoPanel({
         </div>
         {interval && tonic && (
           <div>
-            <span className="text-secondary text-xs font-medium uppercase tracking-wide">
+            <span className="text-text-secondary text-xs font-medium uppercase tracking-wide">
               Interval from {tonic}
             </span>
             <p
-              className="text-primary text-lg font-semibold"
+              className="text-text-primary text-lg font-semibold"
               data-testid="tapped-note-interval"
             >
               {interval}

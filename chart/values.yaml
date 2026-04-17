@@ -10,11 +10,11 @@ images:
 
 image:
   frontend:
-    repository: proxy.xyyzx.net/adamancini/groovelab-frontend
+    repository: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-frontend
     tag: ""
     pullPolicy: IfNotPresent
   backend:
-    repository: proxy.xyyzx.net/adamancini/groovelab-backend
+    repository: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-backend
     tag: ""
     pullPolicy: IfNotPresent
 

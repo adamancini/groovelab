@@ -79,7 +79,7 @@ export default function Fretboard({
         y1={paddingTop - 4}
         x2={paddingLeft}
         y2={paddingTop + (strings - 1) * stringSpacing + 4}
-        stroke="var(--color-text-primary)"
+        stroke="var(--color-text-text-primary)"
         strokeWidth={isMini ? 2 : 3}
       />
 
@@ -91,7 +91,7 @@ export default function Fretboard({
           y1={paddingTop - 4}
           x2={paddingLeft + fret * fretSpacing}
           y2={paddingTop + (strings - 1) * stringSpacing + 4}
-          stroke="var(--color-text-secondary)"
+          stroke="var(--color-text-text-secondary)"
           strokeWidth={1}
           opacity={0.4}
         />
@@ -105,7 +105,7 @@ export default function Fretboard({
           y1={paddingTop + s * stringSpacing}
           x2={paddingLeft + frets * fretSpacing}
           y2={paddingTop + s * stringSpacing}
-          stroke="var(--color-text-secondary)"
+          stroke="var(--color-text-text-secondary)"
           strokeWidth={1 + s * 0.3}
           opacity={0.6}
         />
@@ -118,7 +118,7 @@ export default function Fretboard({
           cx={paddingLeft + (fret - 0.5) * fretSpacing}
           cy={paddingTop + ((strings - 1) * stringSpacing) / 2}
           r={isMini ? 2 : 3}
-          fill="var(--color-text-secondary)"
+          fill="var(--color-text-text-secondary)"
           opacity={0.3}
         />
       ))}
@@ -131,7 +131,7 @@ export default function Fretboard({
             x={paddingLeft + (fret - 0.5) * fretSpacing}
             y={height - 2}
             textAnchor="middle"
-            fill="var(--color-text-secondary)"
+            fill="var(--color-text-text-secondary)"
             fontSize={isMini ? 8 : 10}
             opacity={0.5}
           >

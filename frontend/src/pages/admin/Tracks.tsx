@@ -53,12 +53,12 @@ export default function Tracks() {
   );
 
   if (loading) {
-    return <p className="text-secondary">Loading tracks...</p>;
+    return <p className="text-text-secondary">Loading tracks...</p>;
   }
 
   return (
     <div>
-      <h1 className="text-primary mb-6 text-2xl font-bold">
+      <h1 className="text-text-primary mb-6 text-2xl font-bold">
         Track Administration
       </h1>
 
@@ -79,11 +79,11 @@ export default function Tracks() {
         >
           <thead>
             <tr className="border-b border-white/10">
-              <th className="text-secondary px-3 py-2 font-medium">Name</th>
-              <th className="text-secondary px-3 py-2 font-medium">Creator</th>
-              <th className="text-secondary px-3 py-2 font-medium">Chords</th>
-              <th className="text-secondary px-3 py-2 font-medium">Created</th>
-              <th className="text-secondary px-3 py-2 font-medium">Actions</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Name</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Creator</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Chords</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Created</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -93,14 +93,14 @@ export default function Tracks() {
                 className="border-b border-white/5"
                 data-testid={`track-row-${track.id}`}
               >
-                <td className="text-primary px-3 py-2">{track.name}</td>
-                <td className="text-secondary px-3 py-2">
+                <td className="text-text-primary px-3 py-2">{track.name}</td>
+                <td className="text-text-secondary px-3 py-2">
                   {track.user_email}
                 </td>
-                <td className="text-secondary px-3 py-2">
+                <td className="text-text-secondary px-3 py-2">
                   {track.chord_count}
                 </td>
-                <td className="text-secondary px-3 py-2">
+                <td className="text-text-secondary px-3 py-2">
                   {new Date(track.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-3 py-2">
@@ -132,7 +132,7 @@ export default function Tracks() {
       </div>
 
       {tracks.length === 0 && (
-        <p className="text-secondary mt-4 text-center">No tracks found.</p>
+        <p className="text-text-secondary mt-4 text-center">No tracks found.</p>
       )}
 
       {/* Confirmation dialog */}
@@ -147,11 +147,11 @@ export default function Tracks() {
           <div className="bg-surface mx-4 w-full max-w-md rounded-lg border border-white/10 p-6 shadow-xl">
             <h2
               id="delete-dialog-title"
-              className="text-primary mb-2 text-lg font-bold"
+              className="text-text-primary mb-2 text-lg font-bold"
             >
               Confirm Delete
             </h2>
-            <p className="text-secondary mb-6">
+            <p className="text-text-secondary mb-6">
               Are you sure you want to delete this track? This action cannot be
               undone.
             </p>
@@ -160,7 +160,7 @@ export default function Tracks() {
                 type="button"
                 onClick={() => setConfirmDelete(null)}
                 disabled={deleting}
-                className="text-secondary hover:text-primary rounded px-4 py-2 text-sm transition-colors"
+                className="text-text-secondary hover:text-text-primary rounded px-4 py-2 text-sm transition-colors"
                 data-testid="cancel-delete"
               >
                 Cancel

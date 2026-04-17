@@ -40,7 +40,7 @@ export default function Register() {
 
   return (
     <div className="mx-auto max-w-md px-4 py-16">
-      <h1 className="text-primary text-center text-2xl font-bold">
+      <h1 className="text-text-primary text-center text-2xl font-bold">
         Create an account
       </h1>
 
@@ -56,40 +56,40 @@ export default function Register() {
         )}
 
         <label className="flex flex-col gap-1">
-          <span className="text-secondary text-sm">Email</span>
+          <span className="text-text-secondary text-sm">Email</span>
           <input
             type="email"
             required
             autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="bg-elevated text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            className="bg-elevated text-text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
             placeholder="you@example.com"
           />
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-secondary text-sm">Password</span>
+          <span className="text-text-secondary text-sm">Password</span>
           <input
             type="password"
             required
             autoComplete="new-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="bg-elevated text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            className="bg-elevated text-text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
             placeholder="Min 8 characters"
           />
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-secondary text-sm">Confirm password</span>
+          <span className="text-text-secondary text-sm">Confirm password</span>
           <input
             type="password"
             required
             autoComplete="new-password"
             value={confirm}
             onChange={(e) => setConfirm(e.target.value)}
-            className="bg-elevated text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            className="bg-elevated text-text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
             placeholder="Repeat password"
           />
         </label>
@@ -103,7 +103,7 @@ export default function Register() {
         </button>
       </form>
 
-      <p className="text-secondary mt-6 text-center text-sm">
+      <p className="text-text-secondary mt-6 text-center text-sm">
         Already have an account?{" "}
         <Link
           to="/auth/signin"

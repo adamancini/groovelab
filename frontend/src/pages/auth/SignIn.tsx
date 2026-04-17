@@ -29,7 +29,7 @@ export default function SignIn() {
 
   return (
     <div className="mx-auto max-w-md px-4 py-16">
-      <h1 className="text-primary text-center text-2xl font-bold">Sign in</h1>
+      <h1 className="text-text-primary text-center text-2xl font-bold">Sign in</h1>
 
       {/* OAuth buttons -- disabled until providers are configured */}
       <div className="mt-8 flex flex-col gap-3">
@@ -37,7 +37,7 @@ export default function SignIn() {
           type="button"
           disabled
           title="Google sign-in is not yet available"
-          className="bg-elevated text-secondary flex items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-3 font-medium opacity-50 cursor-not-allowed"
+          className="bg-elevated text-text-secondary flex items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-3 font-medium opacity-50 cursor-not-allowed"
         >
           <GoogleIcon />
           Continue with Google
@@ -46,7 +46,7 @@ export default function SignIn() {
           type="button"
           disabled
           title="GitHub sign-in is not yet available"
-          className="bg-elevated text-secondary flex items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-3 font-medium opacity-50 cursor-not-allowed"
+          className="bg-elevated text-text-secondary flex items-center justify-center gap-2 rounded-lg border border-white/10 px-4 py-3 font-medium opacity-50 cursor-not-allowed"
         >
           <GitHubIcon />
           Continue with GitHub
@@ -55,7 +55,7 @@ export default function SignIn() {
 
       <div className="my-6 flex items-center gap-4">
         <hr className="flex-1 border-white/10" />
-        <span className="text-secondary text-sm">or</span>
+        <span className="text-text-secondary text-sm">or</span>
         <hr className="flex-1 border-white/10" />
       </div>
 
@@ -68,27 +68,27 @@ export default function SignIn() {
         )}
 
         <label className="flex flex-col gap-1">
-          <span className="text-secondary text-sm">Email</span>
+          <span className="text-text-secondary text-sm">Email</span>
           <input
             type="email"
             required
             autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="bg-elevated text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            className="bg-elevated text-text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
             placeholder="you@example.com"
           />
         </label>
 
         <label className="flex flex-col gap-1">
-          <span className="text-secondary text-sm">Password</span>
+          <span className="text-text-secondary text-sm">Password</span>
           <input
             type="password"
             required
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="bg-elevated text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            className="bg-elevated text-text-primary rounded-lg border border-white/10 px-4 py-2 placeholder:text-white/30 focus:border-accent-primary focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
             placeholder="********"
           />
         </label>
@@ -102,7 +102,7 @@ export default function SignIn() {
         </button>
       </form>
 
-      <p className="text-secondary mt-6 text-center text-sm">
+      <p className="text-text-secondary mt-6 text-center text-sm">
         Don&apos;t have an account?{" "}
         <Link
           to="/auth/register"

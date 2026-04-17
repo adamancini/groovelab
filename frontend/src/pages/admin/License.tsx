@@ -84,8 +84,8 @@ export default function License() {
   if (loading) {
     return (
       <div>
-        <h1 className="text-primary mb-6 text-2xl font-bold">License</h1>
-        <p className="text-secondary">Loading license information...</p>
+        <h1 className="text-text-primary mb-6 text-2xl font-bold">License</h1>
+        <p className="text-text-secondary">Loading license information...</p>
       </div>
     );
   }
@@ -93,8 +93,8 @@ export default function License() {
   if (error) {
     return (
       <div>
-        <h1 className="text-primary mb-6 text-2xl font-bold">License</h1>
-        <p className="text-secondary" data-testid="license-error">
+        <h1 className="text-text-primary mb-6 text-2xl font-bold">License</h1>
+        <p className="text-text-secondary" data-testid="license-error">
           Unable to load license information. The SDK may not be available yet.
         </p>
       </div>
@@ -104,8 +104,8 @@ export default function License() {
   if (!license) {
     return (
       <div>
-        <h1 className="text-primary mb-6 text-2xl font-bold">License</h1>
-        <p className="text-secondary">No license data available.</p>
+        <h1 className="text-text-primary mb-6 text-2xl font-bold">License</h1>
+        <p className="text-text-secondary">No license data available.</p>
       </div>
     );
   }
@@ -114,7 +114,7 @@ export default function License() {
 
   return (
     <div>
-      <h1 className="text-primary mb-6 text-2xl font-bold">License</h1>
+      <h1 className="text-text-primary mb-6 text-2xl font-bold">License</h1>
 
       <div className="space-y-6">
         {/* License details */}
@@ -124,30 +124,30 @@ export default function License() {
         >
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-secondary text-sm">License ID</p>
+              <p className="text-text-secondary text-sm">License ID</p>
               <p
-                className="text-primary font-mono text-sm"
+                className="text-text-primary font-mono text-sm"
                 data-testid="license-id"
               >
                 {license.license_id}
               </p>
             </div>
             <div>
-              <p className="text-secondary text-sm">Type</p>
-              <p className="text-primary text-sm capitalize" data-testid="license-type">
+              <p className="text-text-secondary text-sm">Type</p>
+              <p className="text-text-primary text-sm capitalize" data-testid="license-type">
                 {license.license_type}
               </p>
             </div>
             <div>
-              <p className="text-secondary text-sm">Expires</p>
-              <p className="text-primary text-sm" data-testid="license-expiry">
+              <p className="text-text-secondary text-sm">Expires</p>
+              <p className="text-text-primary text-sm" data-testid="license-expiry">
                 {license.expires_at
                   ? new Date(license.expires_at).toLocaleDateString()
                   : "Never"}
               </p>
             </div>
             <div>
-              <p className="text-secondary text-sm">Status</p>
+              <p className="text-text-secondary text-sm">Status</p>
               <div className="flex items-center gap-2">
                 <span
                   className="inline-block h-3 w-3 rounded-full"
@@ -155,7 +155,7 @@ export default function License() {
                   data-testid="license-health-indicator"
                   aria-label={`License health: ${healthLabel(health)}`}
                 />
-                <p className="text-primary text-sm">{healthLabel(health)}</p>
+                <p className="text-text-primary text-sm">{healthLabel(health)}</p>
               </div>
             </div>
           </div>
@@ -166,7 +166,7 @@ export default function License() {
           className="bg-surface rounded-lg border border-white/10 p-6"
           data-testid="license-entitlements"
         >
-          <h2 className="text-primary mb-4 text-lg font-semibold">
+          <h2 className="text-text-primary mb-4 text-lg font-semibold">
             Entitlements
           </h2>
           {license.entitlements && license.entitlements.length > 0 ? (
@@ -177,7 +177,7 @@ export default function License() {
                   className="flex items-center justify-between rounded border border-white/5 px-4 py-2"
                   data-testid={`entitlement-${ent.field}`}
                 >
-                  <span className="text-primary text-sm font-mono">
+                  <span className="text-text-primary text-sm font-mono">
                     {ent.field}
                   </span>
                   <span
@@ -191,7 +191,7 @@ export default function License() {
               ))}
             </div>
           ) : (
-            <p className="text-secondary text-sm">
+            <p className="text-text-secondary text-sm">
               No entitlements configured.
             </p>
           )}

@@ -34,7 +34,7 @@ spec:
               echo "Database is ready."
           env:
             - name: DB_HOST
-              value: "{{ include "groovelab.fullname" . }}-postgresql"
+              value: "{{ include "groovelab.fullname" . }}-postgresql-rw"
             - name: DB_PORT
               value: "5432"
         - name: db-migrate
@@ -46,7 +46,7 @@ spec:
             - /migrations
           env:
             - name: DB_HOST
-              value: "{{ include "groovelab.fullname" . }}-postgresql"
+              value: "{{ include "groovelab.fullname" . }}-postgresql-rw"
             - name: DB_PORT
               value: "5432"
             - name: DATABASE_USER
@@ -80,7 +80,7 @@ spec:
             periodSeconds: 10
           env:
             - name: DB_HOST
-              value: "{{ include "groovelab.fullname" . }}-postgresql"
+              value: "{{ include "groovelab.fullname" . }}-postgresql-rw"
             - name: DB_PORT
               value: "5432"
             - name: DATABASE_USER

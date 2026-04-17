@@ -71,12 +71,12 @@ export default function Users() {
   );
 
   if (loading) {
-    return <p className="text-secondary">Loading users...</p>;
+    return <p className="text-text-secondary">Loading users...</p>;
   }
 
   return (
     <div>
-      <h1 className="text-primary mb-6 text-2xl font-bold">User Management</h1>
+      <h1 className="text-text-primary mb-6 text-2xl font-bold">User Management</h1>
 
       {error && (
         <div
@@ -95,11 +95,11 @@ export default function Users() {
         >
           <thead>
             <tr className="border-b border-white/10">
-              <th className="text-secondary px-3 py-2 font-medium">Email</th>
-              <th className="text-secondary px-3 py-2 font-medium">Role</th>
-              <th className="text-secondary px-3 py-2 font-medium">Status</th>
-              <th className="text-secondary px-3 py-2 font-medium">Created</th>
-              <th className="text-secondary px-3 py-2 font-medium">Actions</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Email</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Role</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Status</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Created</th>
+              <th className="text-text-secondary px-3 py-2 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -109,13 +109,13 @@ export default function Users() {
                 className="border-b border-white/5"
                 data-testid={`user-row-${user.id}`}
               >
-                <td className="text-primary px-3 py-2">{user.email}</td>
+                <td className="text-text-primary px-3 py-2">{user.email}</td>
                 <td className="px-3 py-2">
                   <select
                     value={user.role}
                     onChange={(e) => handleRoleChange(user, e.target.value)}
                     disabled={updating === user.id}
-                    className="bg-surface text-primary rounded border border-white/10 px-2 py-1 text-sm"
+                    className="bg-surface text-text-primary rounded border border-white/10 px-2 py-1 text-sm"
                     data-testid={`role-select-${user.id}`}
                     aria-label={`Role for ${user.email}`}
                   >
@@ -132,7 +132,7 @@ export default function Users() {
                     {user.enabled ? "Enabled" : "Disabled"}
                   </span>
                 </td>
-                <td className="text-secondary px-3 py-2">
+                <td className="text-text-secondary px-3 py-2">
                   {new Date(user.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-3 py-2">
@@ -153,7 +153,7 @@ export default function Users() {
       </div>
 
       {users.length === 0 && (
-        <p className="text-secondary mt-4 text-center">No users found.</p>
+        <p className="text-text-secondary mt-4 text-center">No users found.</p>
       )}
     </div>
   );

@@ -93,8 +93,8 @@ export default function FretboardRef() {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
-      <h1 className="text-primary text-2xl font-bold">Fretboard</h1>
-      <p className="text-secondary mt-1 text-sm">
+      <h1 className="text-text-primary text-2xl font-bold">Fretboard</h1>
+      <p className="text-text-secondary mt-1 text-sm">
         Explore notes, scales, and chords on the bass fretboard.
       </p>
 
@@ -201,7 +201,7 @@ function FretboardRefSVG({
         y1={paddingTop - 6}
         x2={paddingLeft}
         y2={paddingTop + (strings - 1) * stringSpacing + 6}
-        stroke="var(--color-text-primary)"
+        stroke="var(--color-text-text-primary)"
         strokeWidth={3}
       />
 
@@ -213,7 +213,7 @@ function FretboardRefSVG({
           y1={paddingTop - 6}
           x2={paddingLeft + fret * fretSpacing}
           y2={paddingTop + (strings - 1) * stringSpacing + 6}
-          stroke="var(--color-text-secondary)"
+          stroke="var(--color-text-text-secondary)"
           strokeWidth={1}
           opacity={0.4}
         />
@@ -227,7 +227,7 @@ function FretboardRefSVG({
           y1={paddingTop + s * stringSpacing}
           x2={paddingLeft + frets * fretSpacing}
           y2={paddingTop + s * stringSpacing}
-          stroke="var(--color-text-secondary)"
+          stroke="var(--color-text-text-secondary)"
           strokeWidth={1 + s * 0.3}
           opacity={0.6}
         />
@@ -240,7 +240,7 @@ function FretboardRefSVG({
           cx={paddingLeft + (fret - 0.5) * fretSpacing}
           cy={paddingTop + ((strings - 1) * stringSpacing) / 2}
           r={3}
-          fill="var(--color-text-secondary)"
+          fill="var(--color-text-text-secondary)"
           opacity={0.3}
         />
       ))}
@@ -252,7 +252,7 @@ function FretboardRefSVG({
           x={paddingLeft + (fret - 0.5) * fretSpacing}
           y={height - 4}
           textAnchor="middle"
-          fill="var(--color-text-secondary)"
+          fill="var(--color-text-text-secondary)"
           fontSize={10}
           opacity={0.5}
         >
@@ -293,10 +293,10 @@ function FretboardRefSVG({
               break;
             case "dimmed":
               fillColor = "transparent";
-              strokeColor = "var(--color-text-secondary)";
+              strokeColor = "var(--color-text-text-secondary)";
               strokeWidth = 1;
               radius = dotRadius - 3;
-              textColor = "var(--color-text-secondary)";
+              textColor = "var(--color-text-text-secondary)";
               opacity = 0.5;
               fillOpacity = 0;
               break;

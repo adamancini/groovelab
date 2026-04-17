@@ -122,3 +122,140 @@ Shared at the end of the exercise as structured developer experience feedback.
 **Resolution:** Disabled the Replicated SDK subchart (`--set replicated.enabled=false`) and nulled the dockerconfigjson key (`--set global.replicated.dockerconfigjson=null`) during e2e testing since no license is needed for the walking skeleton. This is fine for dev/e2e but means the SDK is not exercised in the e2e path.
 
 **Severity:** annoyance
+
+## Entry 10 — 2026-04-17 — annoyance
+
+**Trying to:** Configure a Replicated service account token for CI/agent use with minimum-viable RBAC permissions to create releases, manage channels, provision CMX clusters, and create/update customer licenses.
+
+**Expected:** The docs show `[:appId]` as an interpolation variable and `platform/app/[:appId]/cluster/**` as a cluster resource path. Following those patterns should produce a working policy.
+
+**Actual:** Three bugs in the initial policy draft: (1) cluster resources use the prefix `kots/cluster/...`, not `platform/app/[:appId]/cluster/...` — the `platform/` prefix is a legacy alias that does not work for CMX; (2) `platform/app/[:appId]/customer/**` is not a valid resource name — the correct deny target is `kots/app/[:appId]/license/**`; (3) the policy omitted `kots/app/[:appId]/read`, so `replicated app ls` returned an empty list even with a valid token. Additionally, the pre-existing "CI" policy in the Vendor Portal had `allowed: []` / `denied: ["**/*"]` — a fully locked-down placeholder — even though the service account had already been created and a token issued against it.
+
+**Resolution:** Fetched the full RBAC resource name reference from docs.replicated.com, identified the correct `kots/cluster/...` prefix, added `kots/app/[:appId]/read`, and applied the corrected policy via `PUT /vendor/v3/policy/:id` using a personal admin token. The groovelab-ci service account can now list apps, channels, create releases, and manage CMX clusters. ~20 minutes to diagnose, fetch docs, draft corrected policy, and apply via API.
+
+**Severity:** annoyance
+
+## Entry 11 — 2026-04-17 — annoyance
+
+**Trying to:** Push locally-built Docker images to GHCR (ghcr.io/adamancini/groovelab-frontend and groovelab-backend) for a UAT cluster deploy.
+
+**Expected:** The GitHub PAT stored in pass (github.com/adamancini/ghcr_pat) would have sufficient scope to push images, since it was already used successfully for `docker login ghcr.io`.
+
+**Actual:** `docker login` succeeded but `docker push` failed with "permission_denied: The token provided does not match expected scopes." The PAT has only `read:packages` scope, not `write:packages`. Login and pull work; push is silently blocked at push time rather than at login time.
+
+**Resolution:** The active `gh` CLI session already had `write:packages` scope (`gh auth status` confirms). Use `gh auth token | docker login ghcr.io -u adamancini --password-stdin` instead of a stored PAT. No new token needed.
+
+**Severity:** annoyance
+
+## Entry 12 — 2026-04-17 — blocker (worked around)
+
+**Trying to:** Install the groovelab Helm chart on a fresh CMX k3s cluster with `helm install` in a single step.
+
+**Expected:** The CloudNativePG subchart bundles its CRDs, so `helm install` would install CRDs and the CNPG `Cluster` resource in the correct order.
+
+**Actual:** `helm install` failed immediately: "resource mapping not found for name: groovelab-postgresql ... no matches for kind Cluster in version postgresql.cnpg.io/v1 — ensure CRDs are installed first." The CNPG subchart CRDs are not applied before the parent chart's templates that reference them, because Helm does not guarantee CRD installation ordering across subcharts in a single `helm install` invocation.
+
+**Resolution:** Applied CRDs from the CNPG subchart separately before the full install: `helm template groovelab oci://... --show-only 'templates/crds/*' | kubectl apply -f -`, then waited for all CRDs to reach `Established` condition (`kubectl wait --for=condition=Established crd/...`), then ran the full `helm install`. Also required re-applying `app.kubernetes.io/managed-by: Helm` label and both `meta.helm.sh/release-name`/`meta.helm.sh/release-namespace` annotations to all 16 cluster-scoped resources so Helm would adopt them (see Entry 16). Long-term fix is a `wait-for-crds` Job in the chart; see stories GRO-zm5p. ~45 minutes total including annotation surgery.
+
+**Severity:** blocker (worked around)
+
+## Entry 13 — 2026-04-17 — annoyance
+
+**Trying to:** Install the groovelab Helm chart as a customer using `helm registry login` + `helm install oci://registry.xyyzx.net/library/groovelab`, which is the expected Replicated Helm install flow.
+
+**Expected:** After `helm registry login` with the license ID, the chart would be available at the OCI registry URL so a customer could `helm pull` or `helm install` it directly.
+
+**Actual:** `helm show chart oci://registry.xyyzx.net/library/groovelab` returned "unable to locate any tags in provided repository." The release (seq 21) had `helmChartURLs: []` and only showed subcharts (cert-manager, cloudnative-pg, replicated) in its `charts` list. The main groovelab chart was never pushed as an OCI artifact. Root cause: the release was created with `replicated release create --yaml-dir ./chart/`, which uploads chart files as a KOTS manifest bundle, not as a packaged OCI Helm chart. The `.replicated` config's `charts:` block and the no-flag invocation (`replicated release create` reading from `.replicated`) is the correct path for Helm OCI publishing; `--yaml-dir` bypasses it entirely.
+
+**Resolution:** Created a new release using `replicated release create` (no `--yaml-dir`) after fixing `.replicated` to use `appSlug:`. The correct OCI path is NOT `oci://registry.xyyzx.net/library/groovelab` — it includes the app slug and channel slug: `oci://registry.xyyzx.net/<appSlug>/<channelSlug>/<chartName>`. Obtain the exact URL from `replicated customer inspect --customer <id>` (requires admin token; CI service account lacks permission). Login uses the license ID as both username and password: `helm registry login registry.xyyzx.net --username <licenseID> --password <licenseID>`.
+
+**Severity:** annoyance
+
+## Entry 14 — 2026-04-17 — annoyance
+
+**Trying to:** Run `replicated release create` (no flags) using the `.replicated` config file with `app: groovelab` to package and push the Helm chart to the OCI registry.
+
+**Expected:** The CLI would read `app: groovelab`, resolve the app, package the chart, and push it.
+
+**Actual:** Error: `unknown app type ""`. The CLI silently ignored the `app:` key because the config struct uses `yaml:"appSlug"` not `yaml:"app"`. With the slug blank, `resolveAppType()` skipped the API lookup entirely, leaving `appType` as an empty string, which then hits a hard error in `CreateRelease`.
+
+**Resolution:** Changed `app:` to `appSlug:` in `.replicated`. There is no `appType` field in the schema — the CLI determines it by API lookup once the slug is resolved. Identified via source inspection of `pkg/tools/types.go`.
+
+**Severity:** annoyance
+
+## Entry 15 — 2026-04-17 — annoyance
+
+**Trying to:** Promote a Helm-only release (seq 22, packaged via `replicated release create` reading `.replicated`) to the UAT channel, which had one customer with `isKotsInstallEnabled: true`.
+
+**Expected:** The promote would succeed because the customer already had `isHelmInstallEnabled: true` and this was an explicit Helm UAT test. The protective guard blocking KOTS customers from Helm-only releases is reasonable, but the path to fix it should be straightforward via the API.
+
+**Actual:** Promote failed: "You are attempting to promote a helm-cli-only release to a channel with kots-enabled customers." Three attempted fixes all hit unexpected failures before the CLI worked:
+1. `PUT /vendor/v3/app/:appId/customer/:customerId` with the CI token — returned RBAC error `access to "kots/app//license/:customerId/update" is denied` (note empty app ID in the resource path — RBAC check was broken for this endpoint with a service account token).
+2. `PUT /vendor/v3/customer/:customerId` with the admin token — returned 404. This endpoint exists (it's what the CLI uses) but was returning 404 with no body, which is misleading.
+3. `PUT /vendor/v3/customer/:customerId` with proper body — returned 400 "at least one channel must be provided", then 400 "email is required for customers with helm install enabled", before finally discovering the correct required fields via trial and error.
+
+The CLI (`replicated customer update --kots-install=false --channel ... --email ...`) worked after finding all required flags. The API returned 404 for what is a valid endpoint, and the RBAC service account error showed an empty app ID in the resource path, obscuring the true permission issue.
+
+**Resolution:** Used `replicated customer update --app groovelab --customer <id> --name <name> --email <email> --channel <channel> --kots-install=false --helm-install`. ~15 minutes to identify the right command after API 404s and RBAC errors.
+
+**Severity:** annoyance
+
+## Entry 16 — 2026-04-17 — blocker (worked around)
+
+**Trying to:** Install the groovelab Helm chart from the Replicated OCI registry on a fresh CMX cluster where CNPG CRDs are pre-installed (two-phase install workaround for Entry 12).
+
+**Expected:** Pre-annotating or re-annotating cluster-scoped CNPG resources (CRDs, webhooks, RBAC) to point to the `groovelab` release would allow a single `helm install` to proceed without ownership conflicts.
+
+**Actual:** A cascade of Helm ownership annotation failures across multiple resource types — each `helm install` attempt surfaced a new resource type with conflicting or missing ownership metadata. The sequence was: cert-manager CRDs (wrong namespace), CNPG CRDs (wrong release), CNPG MutatingWebhookConfiguration (wrong release), CNPG ClusterRoles (wrong release), then webhook `no endpoints available` (operator pod deleted by uninstall but webhook config remained), then `missing key app.kubernetes.io/managed-by: must be set to Helm` (stripped the label to remove ownership but Helm requires both the label AND annotations). Each fix exposed the next problem. Root causes: (1) CRDs have `helm.sh/resource-policy: keep` preventing deletion on uninstall, leaving them stranded between releases; (2) Helm requires both the `app.kubernetes.io/managed-by: Helm` label AND the release-name/release-namespace annotations to adopt a resource; (3) the CNPG webhook service endpoint disappears when the operator pod is deleted but the webhook config remains, blocking webhook-validated resource creation. The correct long-term fix is a `wait-for-crds` Job in the chart using the pattern from github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration.
+
+**Resolution:** Applied correct label (`app.kubernetes.io/managed-by: Helm`) AND both annotations (`meta.helm.sh/release-name=groovelab`, `meta.helm.sh/release-namespace=groovelab`) to all 16 cluster-scoped CNPG resources. Pre-applied CRDs via `helm template ... --show-only 'templates/crds/*' | kubectl apply -f -`. ~45 minutes across 6+ failed install attempts.
+
+**Severity:** blocker (worked around)
+
+## Entry 17 — 2026-04-17 — blocker
+
+**Trying to:** Pull the frontend image through the Replicated proxy registry (`proxy.xyyzx.net`) after a successful `helm install` with license credentials.
+**Expected:** `proxy.xyyzx.net/adamancini/groovelab-frontend:0.1.0` to authenticate using the `enterprise-pull-secret` credentials and serve the image.
+**Actual:** Every pull attempt received `400 Bad Request` from `proxy.xyyzx.net/token`. The error body reveals the scope path format is wrong: `"All requested scope names are invalid. Valid scope name must have the following format: proxy/<app-slug>/<full-image-name>"`. The chart values used `proxy.xyyzx.net/adamancini/groovelab-frontend` (missing the required `proxy/<app-slug>/` prefix and the full upstream registry path).
+**Resolution:** Changed image repositories in `values.yaml` to `proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-frontend` (and backend). The Replicated proxy requires the full upstream registry path embedded in the URL: `proxy.<custom-domain>/proxy/<app-slug>/<upstream-registry>/<org>/<image>`. Confirmed with manual curl to the token endpoint. ~30 minutes.
+**Severity:** blocker
+
+## Entry 18 — 2026-04-17 — blocker
+
+**Trying to:** Start the backend after PostgreSQL came up; `wait-for-db` init container was polling for the database.
+**Expected:** `groovelab-postgresql` to resolve as a DNS name inside the cluster since the CNPG cluster resource is named `groovelab-postgresql`.
+**Actual:** `nc: bad address 'groovelab-postgresql'` — no such service exists. The CloudNativePG operator creates companion Services named `<cluster-name>-rw` (read-write), `<cluster-name>-r` (read), and `<cluster-name>-ro` (read-only), but NOT a plain `<cluster-name>` service.
+**Resolution:** Fixed the backend `Deployment` template to use `{{ include "groovelab.fullname" . }}-postgresql-rw` instead of `{{ include "groovelab.fullname" . }}-postgresql`. For immediate UAT, patched the running deployment with `kubectl patch` to update `DB_HOST`. ~20 minutes.
+**Severity:** blocker
+
+## Entry 19 — 2026-04-17 — blocker
+
+**Trying to:** Re-run `helm install` after a previous failed install attempt (one of the ownership conflict failures in Entry 16).
+**Expected:** Since the previous install failed mid-way, Helm would either have no record of the release or would detect it as failed and allow a clean install.
+**Actual:** Helm left a `sh.helm.release.v1.groovelab.v1` Secret in the `groovelab` namespace recording the failed release. Subsequent `helm install` attempts exited with "cannot re-use a name that is still in use." `helm list` showed the release as `failed`. `helm uninstall` then tried to delete resources it owned and cascaded into the CNPG ownership conflict problem (Entry 16), often leaving the cluster in a worse state than before. Even `helm uninstall --keep-history` did not fully clear the state because cluster-scoped resources (CRDs, webhooks) with `keep` policy were left behind with stale ownership metadata.
+**Resolution:** Manually deleted the Helm state secrets: `kubectl -n groovelab delete secret sh.helm.release.v1.groovelab.v1`. After removing the secrets, `helm install` treated the release as new. Required in combination with manual CRD/webhook cleanup (Entry 16) to achieve a clean install state. ~10 minutes identifying the secret name and understanding that deleting it was safe.
+**Severity:** blocker
+
+## Entry 20 — 2026-04-17 — blocker
+
+**Trying to:** Deploy the current application (with full Chi router, auth, flashcards, fretboard) to the UAT cluster after rebuilding and pushing `0.1.0` Docker images to GHCR.
+**Expected:** The running backend pod to serve the new code after `helm upgrade` updated the deployment.
+**Actual:** The backend continued returning "Groovelab backend" (the walking skeleton catch-all response from commit `d72fba27`, 2026-04-15). The pod image was `ghcr.io/adamancini/groovelab-backend:0.1.0` but the node had cached the walking-skeleton `0.1.0` image from an earlier install attempt. Because `imagePullPolicy: IfNotPresent`, Kubernetes never pulled the newer push of the same tag. Mutable tags + cached images = silent stale deployment.
+**Resolution:** Rebuilt both images using a new tag (`<commit-SHA>` e.g. `3d0c5b2`), pushed, and upgraded with that tag. Forced a fresh pull and confirmed the Chi router was serving `{"error":"not authenticated"}` on `/api/v1/auth/me`. Going forward, CI builds should tag images by git SHA rather than mutable semver tags for release candidates. ~30 minutes diagnosing why the API returned the wrong response.
+**Severity:** blocker
+
+## Entry 21 — 2026-04-17 — annoyance
+
+**Trying to:** Run `helm upgrade` after applying a manual `kubectl patch` to a live Deployment to fix `DB_HOST` during UAT debugging.
+**Expected:** `helm upgrade` to reconcile the deployment to the desired state from the chart template.
+**Actual:** `helm upgrade` with `--server-side-apply` (the Helm v4 default) failed: `Apply failed with 3 conflicts: conflicts with "kubectl-patch"` on `.spec.template.spec.containers[name="backend"].env[name="DB_HOST"].value` and both init containers. The `kubectl patch` created a field manager entry that Helm could not override without explicit permission.
+**Resolution:** Added `--force-conflicts` to the `helm upgrade` command to reclaim field ownership. This succeeds but is a one-time override; subsequent upgrades without `--force-conflicts` work normally once Helm owns the fields. Lesson: during UAT debugging, prefer `helm upgrade --set` over `kubectl patch` to stay within Helm's field manager ownership.
+**Severity:** annoyance
+
+## Entry 22 — 2026-04-17 — blocker
+
+**Trying to:** Display readable text throughout the Groovelab UI (headings, labels, body copy).
+**Expected:** `text-primary` to render as the primary text color (light gray `#e0e0e0` in dark mode).
+**Actual:** `text-primary` maps to `--color-primary` which is the BACKGROUND color (`#1a1a2e` in dark mode — near-black). All headings and text using `text-primary` were invisible against the dark background. The design system defined separate tokens: `--color-primary` for backgrounds and `--color-text-primary` for text, generating `bg-primary`/`text-primary` and `text-text-primary` respectively. The comment in `index.css` (`/* Text -- used via text-primary, text-secondary */`) was misleading — it implied `text-primary` was the text utility, when the actual text utility is `text-text-primary`. The mismatch was introduced during the initial component authoring.
+**Resolution:** Globally replaced `text-primary` → `text-text-primary` and `text-secondary` → `text-text-secondary` across 19 TSX files, and updated the CSS comment. ~20 minutes identifying root cause, ~5 minutes to fix.
+**Severity:** blocker

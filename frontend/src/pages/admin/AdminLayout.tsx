@@ -16,7 +16,7 @@ export default function AdminLayout() {
   if (loading) {
     return (
       <div className="mx-auto max-w-6xl px-4 py-16 text-center">
-        <p className="text-secondary">Loading...</p>
+        <p className="text-text-secondary">Loading...</p>
       </div>
     );
   }
@@ -24,8 +24,8 @@ export default function AdminLayout() {
   if (!user || user.role !== "admin") {
     return (
       <div className="mx-auto max-w-6xl px-4 py-16 text-center">
-        <h1 className="text-primary text-2xl font-bold">Access Denied</h1>
-        <p className="text-secondary mt-4">
+        <h1 className="text-text-primary text-2xl font-bold">Access Denied</h1>
+        <p className="text-text-secondary mt-4">
           You do not have permission to access the admin panel.
         </p>
       </div>
@@ -53,7 +53,7 @@ export default function AdminLayout() {
                   className={`block rounded px-3 py-2 text-sm transition-colors ${
                     isActive
                       ? "bg-accent-primary/20 text-accent-primary font-medium"
-                      : "text-secondary hover:text-primary hover:bg-white/5"
+                      : "text-text-secondary hover:text-text-primary hover:bg-white/5"
                   }`}
                 >
                   {item.label}
@@ -65,7 +65,7 @@ export default function AdminLayout() {
         <hr className="my-4 border-white/10" />
         <Link
           to="/"
-          className="text-secondary hover:text-primary block px-3 py-2 text-sm transition-colors"
+          className="text-text-secondary hover:text-text-primary block px-3 py-2 text-sm transition-colors"
           data-testid="back-to-app"
         >
           Back to App

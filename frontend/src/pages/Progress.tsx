@@ -63,7 +63,7 @@ export default function Progress() {
   if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center py-24">
-        <p className="text-secondary animate-pulse text-lg">
+        <p className="text-text-secondary animate-pulse text-lg">
           Loading progress...
         </p>
       </div>
@@ -74,8 +74,8 @@ export default function Progress() {
   if (!user) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16 text-center">
-        <h1 className="text-primary text-2xl font-bold">Progress</h1>
-        <p className="text-secondary mt-4">
+        <h1 className="text-text-primary text-2xl font-bold">Progress</h1>
+        <p className="text-text-secondary mt-4">
           Sign in to track your learning progress.
         </p>
         <Link
@@ -92,7 +92,7 @@ export default function Progress() {
   if (error) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16 text-center">
-        <h1 className="text-primary text-2xl font-bold">Progress</h1>
+        <h1 className="text-text-primary text-2xl font-bold">Progress</h1>
         <p className="text-accent-wrong mt-4">{error}</p>
       </div>
     );
@@ -102,15 +102,15 @@ export default function Progress() {
   if (!dashboard || !streaks) {
     return (
       <div className="mx-auto max-w-4xl px-4 py-16 text-center">
-        <h1 className="text-primary text-2xl font-bold">Progress</h1>
-        <p className="text-secondary mt-4">No progress data available yet.</p>
+        <h1 className="text-text-primary text-2xl font-bold">Progress</h1>
+        <p className="text-text-secondary mt-4">No progress data available yet.</p>
       </div>
     );
   }
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-8">
-      <h1 className="text-primary text-2xl font-bold">Progress</h1>
+      <h1 className="text-text-primary text-2xl font-bold">Progress</h1>
 
       {/* Summary cards */}
       <div
@@ -142,7 +142,7 @@ export default function Progress() {
       {/* Mastery by topic */}
       <section className="mt-8" aria-label="Mastery by topic">
         <h2
-          className="text-primary text-lg font-semibold"
+          className="text-text-primary text-lg font-semibold"
           data-testid="mastery-heading"
         >
           Mastery by Topic
@@ -152,7 +152,7 @@ export default function Progress() {
             <TopicBar key={topic.topic} topic={topic} />
           ))}
           {dashboard.topics.length === 0 && (
-            <p className="text-secondary text-sm">
+            <p className="text-text-secondary text-sm">
               No topic data yet. Start learning to see your progress here.
             </p>
           )}
@@ -162,7 +162,7 @@ export default function Progress() {
       {/* Weak areas */}
       <section className="mt-8" aria-label="Weak areas">
         <h2
-          className="text-primary text-lg font-semibold"
+          className="text-text-primary text-lg font-semibold"
           data-testid="weak-areas-heading"
         >
           Weak Areas
@@ -177,10 +177,10 @@ export default function Progress() {
                   data-testid={`weak-card-${card.card_id}`}
                 >
                   <div>
-                    <p className="text-primary text-sm font-medium">
+                    <p className="text-text-primary text-sm font-medium">
                       {card.question}
                     </p>
-                    <p className="text-secondary text-xs">{card.topic}</p>
+                    <p className="text-text-secondary text-xs">{card.topic}</p>
                   </div>
                   <span className="text-accent-wrong text-sm font-bold">
                     {card.accuracy}%
@@ -189,7 +189,7 @@ export default function Progress() {
               ))}
             </ul>
           ) : (
-            <p className="text-secondary text-sm">
+            <p className="text-text-secondary text-sm">
               No weak areas detected. Keep up the great work!
             </p>
           )}
@@ -217,10 +217,10 @@ function StatCard({
       className="bg-elevated rounded-lg border border-white/10 p-4"
       data-testid={testId}
     >
-      <p className="text-secondary text-xs font-medium uppercase tracking-wide">
+      <p className="text-text-secondary text-xs font-medium uppercase tracking-wide">
         {label}
       </p>
-      <p className="text-primary mt-1 text-2xl font-bold">{value}</p>
+      <p className="text-text-primary mt-1 text-2xl font-bold">{value}</p>
     </div>
   );
 }
@@ -230,8 +230,8 @@ function TopicBar({ topic }: { topic: api.TopicMastery }) {
   return (
     <div data-testid={`topic-bar-${topic.topic}`}>
       <div className="flex items-center justify-between">
-        <span className="text-primary text-sm font-medium">{topic.topic}</span>
-        <span className="text-secondary text-sm">{percentage}%</span>
+        <span className="text-text-primary text-sm font-medium">{topic.topic}</span>
+        <span className="text-text-secondary text-sm">{percentage}%</span>
       </div>
       <div className="bg-primary/20 mt-1 h-2.5 w-full overflow-hidden rounded-full">
         <div

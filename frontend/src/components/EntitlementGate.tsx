@@ -47,7 +47,7 @@ export default function EntitlementGate({
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 20 20"
           fill="currentColor"
-          className="text-secondary h-6 w-6 drop-shadow"
+          className="text-text-secondary h-6 w-6 drop-shadow"
           aria-hidden="true"
         >
           <path
@@ -63,7 +63,7 @@ export default function EntitlementGate({
         <div
           role="tooltip"
           data-testid="entitlement-tooltip"
-          className="bg-elevated text-primary absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 rounded-lg border border-white/10 px-3 py-2 text-xs shadow-lg whitespace-nowrap"
+          className="bg-elevated text-text-primary absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 rounded-lg border border-white/10 px-3 py-2 text-xs shadow-lg whitespace-nowrap"
         >
           {tooltip}
         </div>
