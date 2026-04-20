@@ -82,3 +82,16 @@ features:
     # enabled is controlled by the track_export_enabled license entitlement field.
     # Default false; overridden by KOTS HelmChart CR or operator --set flag.
     enabled: "false"
+
+auth:
+  # sessionDuration controls how long an authenticated session lasts.
+  # Configurable via KOTS config item "session_duration".
+  sessionDuration: "24h"
+  # guestAccess controls whether unauthenticated users can access learning features.
+  # Configurable via KOTS config item "guest_access".
+  guestAccess: true
+
+flashcards:
+  # maxCardsPerSession limits how many flashcards are returned per session.
+  # Configurable via KOTS config item "max_cards_per_session".
+  maxCardsPerSession: 20

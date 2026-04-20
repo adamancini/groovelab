@@ -759,6 +759,27 @@ func TestAdaptiveEngine_ProcessAnswer_StageZeroCannotRegress(t *testing.T) {
 	assert.Equal(t, 0, m.Stage, "stage must not go below 0")
 }
 
+func TestBuildSession_RespectsMaxCards(t *testing.T) {
+	// Create 30 test cards with no mastery (all new).
+	cards := make([]flashcards.Card, 30)
+	for i := range cards {
+		cards[i] = flashcards.Card{
+			ID:        fmt.Sprintf("maxcards-%02d", i),
+			Topic:     "test_topic",
+			Direction: "name_to_notes",
+		}
+	}
+	masteryMap := make(map[string]*flashcards.Mastery)
+
+	session := flashcards.BuildSession(cards, masteryMap, 5)
+	assert.LessOrEqual(t, len(session), 5, "BuildSession with maxCards=5 should return at most 5 cards")
+
+	// With maxCards=0 (unlimited), should use SessionSize.
+	sessionDefault := flashcards.BuildSession(cards, masteryMap, 0)
+	assert.LessOrEqual(t, len(sessionDefault), flashcards.SessionSize,
+		"BuildSession with maxCards=0 should not exceed SessionSize")
+}
+
 func TestAdaptiveEngine_BuildSession_RespectsDistribution(t *testing.T) {
 	// Create 30 test cards.
 	cards := make([]flashcards.Card, 30)
@@ -798,7 +819,7 @@ func TestAdaptiveEngine_BuildSession_RespectsDistribution(t *testing.T) {
 		}
 	}
 
-	session := flashcards.BuildSession(cards, masteryMap)
+	session := flashcards.BuildSession(cards, masteryMap, 0)
 	assert.Equal(t, flashcards.SessionSize, len(session),
 		"session should have exactly %d cards", flashcards.SessionSize)
 

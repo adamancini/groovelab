@@ -98,3 +98,9 @@ spec:
               value: "6379"
             - name: APP_VERSION
               value: {{ .Chart.AppVersion | default "0.1.0" | quote }}
+            - name: SESSION_DURATION
+              value: {{ .Values.auth.sessionDuration | default "24h" | quote }}
+            - name: MAX_CARDS_PER_SESSION
+              value: {{ .Values.flashcards.maxCardsPerSession | default 20 | quote }}
+            - name: GUEST_ACCESS_ENABLED
+              value: {{ .Values.auth.guestAccess | default true | quote }}

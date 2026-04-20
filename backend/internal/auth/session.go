@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,11 +23,25 @@ type SessionConfig struct {
 	Secure     bool // set true when behind TLS
 }
 
+// parseSessionDuration reads SESSION_DURATION env var (e.g., "24h", "120m").
+// Falls back to 24h if unset or invalid.
+func parseSessionDuration() time.Duration {
+	raw := os.Getenv("SESSION_DURATION")
+	if raw == "" {
+		return 24 * time.Hour
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	return d
+}
+
 // DefaultSessionConfig returns production-safe defaults.
 func DefaultSessionConfig() SessionConfig {
 	return SessionConfig{
 		CookieName: "groovelab_session",
-		TTL:        24 * time.Hour,
+		TTL:        parseSessionDuration(),
 		Secure:     false,
 	}
 }

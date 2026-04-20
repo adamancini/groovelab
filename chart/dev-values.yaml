@@ -1,0 +1,23 @@
+# dev-values.yaml: mirrors KOTS config defaults for headless testing.
+# Used with: helm install groovelab chart/ -f chart/dev-values.yaml
+
+cnpg:
+  createCluster: true
+
+externalDatabase:
+  host: ""
+  port: 5432
+  username: groovelab
+  password: ""
+  sslMode: require
+
+auth:
+  sessionDuration: "24h"
+  guestAccess: true
+
+flashcards:
+  maxCardsPerSession: 20
+
+features:
+  trackExport:
+    enabled: "false"

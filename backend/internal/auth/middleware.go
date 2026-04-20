@@ -2,6 +2,7 @@ package auth
 
 import (
 	"net/http"
+	"os"
 
 	"github.com/aarondl/authboss/v3"
 )
@@ -21,6 +22,20 @@ func RequireAuth(ab *authboss.Authboss) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// ConditionalAuth returns RequireAuth middleware only when guest access is disabled.
+// When GUEST_ACCESS_ENABLED=true (default), public learning routes are not gated.
+func ConditionalAuth(ab *authboss.Authboss) func(http.Handler) http.Handler {
+	enabled := os.Getenv("GUEST_ACCESS_ENABLED")
+	if enabled == "" {
+		enabled = "true"
+	}
+	if enabled == "true" || enabled == "1" {
+		// Guest access allowed — return passthrough middleware.
+		return func(next http.Handler) http.Handler { return next }
+	}
+	return RequireAuth(ab)
 }
 
 // RequireAdmin is a Chi middleware that returns 403 for non-admin users.

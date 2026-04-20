@@ -175,9 +175,13 @@ func main() {
 	})
 
 	// Flashcard routes (auth optional -- guests can play without persistence).
+	// ConditionalAuth gates these routes only when GUEST_ACCESS_ENABLED=false.
 	flashcardStore := flashcards.NewStore(dbPool)
 	flashcardHandler := flashcards.NewHandler(flashcardStore, authSystem.AB)
-	flashcardHandler.MountRoutes(r, "/api/v1/flashcards")
+	r.Group(func(r chi.Router) {
+		r.Use(grooveauth.ConditionalAuth(authSystem.AB))
+		flashcardHandler.MountRoutes(r, "/api/v1/flashcards")
+	})
 	log.Println("flashcard routes mounted")
 
 	// Start server.

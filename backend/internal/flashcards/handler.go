@@ -4,12 +4,28 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 
 	"github.com/aarondl/authboss/v3"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// maxCardsPerSession reads MAX_CARDS_PER_SESSION env var.
+// Falls back to 20 if unset or invalid.
+func maxCardsPerSession() int {
+	raw := os.Getenv("MAX_CARDS_PER_SESSION")
+	if raw == "" {
+		return 20
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return 20
+	}
+	return n
+}
 
 // Handler provides HTTP endpoints for the flashcard engine.
 type Handler struct {
@@ -144,7 +160,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// For guests, masteryMap is empty (all cards are "new").
 
-	session := BuildSession(cards, masteryMap)
+	session := BuildSession(cards, masteryMap, maxCardsPerSession())
 	sessionID := uuid.New().String()
 
 	// For guest users, store the session in memory.
