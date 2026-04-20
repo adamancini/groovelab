@@ -1,0 +1,25 @@
+apiVersion: kots.io/v1beta2
+kind: HelmChart
+metadata:
+  name: groovelab
+spec:
+  chart:
+    name: groovelab
+    chartVersion: 0.1.1
+  releaseName: groovelab
+  namespace: groovelab
+  useHelmInstallOperator: true
+  helmUpgradeFlags:
+    - --atomic
+    - --timeout=300s
+  values:
+    features:
+      trackExport:
+        enabled: '{{repl LicenseFieldValue "track_export_enabled"}}'
+  optionalValues:
+    - when: '{{repl ne (LicenseFieldValue "track_export_enabled") ""}}'
+      recursiveMerge: true
+      values:
+        features:
+          trackExport:
+            enabled: '{{repl LicenseFieldValue "track_export_enabled"}}'

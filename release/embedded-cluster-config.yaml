@@ -1,0 +1,14 @@
+apiVersion: embeddedcluster.replicated.com/v1beta1
+kind: Config
+metadata:
+  name: groovelab
+spec:
+  version: ""
+  roles:
+    controller:
+      name: controller
+      labels:
+        controller: "true"
+  extensions:
+    helm:
+      charts: []
