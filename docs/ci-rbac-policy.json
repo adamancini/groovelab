@@ -1,16 +1,30 @@
 {
   "v1": {
-    "name": "CI Service Account",
+    "name": "groovelab-ci",
     "resources": {
       "allowed": [
-        "kots/app/[:appId]/release/**",
-        "kots/app/[:appId]/channel/**",
-        "platform/app/[:appId]/cluster/**"
+        "kots/app/[:appId]/read",
+        "kots/app/[:appId]/release/create",
+        "kots/app/[:appId]/release/[:sequence]/read",
+        "kots/app/[:appId]/channel/create",
+        "kots/app/[:appId]/channel/[:channelid]/read",
+        "kots/app/[:appId]/channel/[:channelid]/promote",
+        "kots/app/[:appId]/channel/[:channelid]/archive",
+        "kots/app/[:appId]/channel/[:channelid]/releases/read",
+        "kots/app/[:appId]/license/create",
+        "kots/app/[:appId]/license/[:customerid]/read",
+        "kots/app/[:appId]/license/[:customerid]/update",
+        "kots/cluster/create",
+        "kots/cluster/list",
+        "kots/cluster/[:clusterid]",
+        "kots/cluster/[:clusterid]/kubeconfig",
+        "kots/cluster/[:clusterid]/delete",
+        "kots/cluster/ttl/update",
+        "kots/cluster/[:clusterid]/port/expose",
+        "kots/cluster/[:clusterid]/port/list",
+        "kots/cluster/[:clusterid]/port/delete"
       ],
-      "denied": [
-        "kots/app/[:appId]/license/**",
-        "platform/app/[:appId]/customer/**"
-      ]
+      "denied": ["**/*"]
     }
   }
 }
