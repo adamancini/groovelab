@@ -1,5 +1,6 @@
 .vault/
 .claude/
+.worktrees/
 
 # Go
 /backend/bin/

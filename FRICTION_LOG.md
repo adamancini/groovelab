@@ -299,3 +299,11 @@ The CLI (`replicated customer update --kots-install=false --channel ... --email 
 **Actual:** `cluster.yaml` was guarded by `{{- if index .Values "cloudnative-pg" "enabled" }}`, so disabling the subchart also suppressed the Cluster resource. The backend init container looped indefinitely on `nc: bad address 'groovelab-postgresql-rw'` with no obvious error in the helm install output.
 **Resolution:** Added a dedicated `cnpg.createCluster: true` flag and changed the cluster.yaml condition to `{{- if .Values.cnpg.createCluster }}`. The `cloudnative-pg.enabled` flag now only controls the subchart deployment. ~15 minutes.
 **Severity:** annoyance
+
+## Entry 28 — 2026-04-20 — blocker
+
+**Trying to:** Expose the groovelab app publicly using `replicated cluster port expose` so a colleague could access the UAT install without needing a local port-forward.
+**Expected:** `replicated cluster port expose <cluster-id> --port 30080 --protocol http,https` would provision a public DNS entry and TLS cert pointing at the NodePort, as documented at https://docs.replicated.com/reference/replicated-cli-cluster-port-expose.
+**Actual:** The command returned `Error: the action is not allowed for the current user or team` on both a k3s (container-based) and an rke2 (VM-based, r1.medium) cluster. The error message gives no indication of what permission is missing, which plan tier enables it, or how to request access. Recreating the cluster on rke2 specifically to satisfy the "VM-based distributions only" requirement in the docs did not help — the error is account-level, not distribution-level.
+**Resolution:** Fell back to `cloudflared tunnel --url http://localhost:8080` as a workaround (free tier, no account needed). The tunnel works but is not a first-class Replicated experience. Resolution time: ~20 minutes including cluster recreation.
+**Severity:** blocker
