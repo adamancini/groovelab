@@ -38,6 +38,9 @@ cloudnative-pg:
   enabled: true
 
 cnpg:
+  # createCluster controls whether the postgresql.cnpg.io/v1 Cluster resource
+  # is created. Set false only when pointing at an external/pre-existing cluster.
+  createCluster: true
   instances: 1
   database: groovelab
   owner: groovelab

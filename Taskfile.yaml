@@ -169,12 +169,21 @@ tasks:
     cmds:
       - echo "Installing groovelab (dev)..."
       - HELMFILE_ENVIRONMENT=dev helmfile sync
-      - echo "Done. Run 'task dev:port-forward' to access the app."
+      - echo "Manifests submitted. Run 'task dev:watch' to follow pod status."
 
   dev:upgrade:
     desc: Upgrade groovelab via helmfile (dev environment)
     cmds:
       - HELMFILE_ENVIRONMENT=dev helmfile sync
+
+  dev:watch:
+    desc: Watch pod status across groovelab and cnpg-system namespaces
+    vars:
+      CONTEXT: '{{ .CONTEXT | default "" }}'
+    cmds:
+      - |
+        KUBECTL="kubectl{{ if .CONTEXT }} --context={{.CONTEXT}}{{ end }}"
+        $KUBECTL get pods -n groovelab -n cnpg-system -w
 
   dev:uninstall:
     desc: Uninstall groovelab (dev environment)
