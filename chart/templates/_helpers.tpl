@@ -72,7 +72,7 @@ and the SDK-managed enterprise-pull-secret when dockerconfigjson is present.
       {{- end -}}
     {{- end -}}
   {{- end -}}
-  {{- if hasKey ((.Values.global).replicated) "dockerconfigjson" }}
+  {{- if ((.Values.global).replicated).dockerconfigjson }}
     {{- $pullSecrets = append $pullSecrets "enterprise-pull-secret" -}}
   {{- end -}}
   {{- if (not (empty $pullSecrets)) -}}

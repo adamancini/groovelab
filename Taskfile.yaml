@@ -1,0 +1,262 @@
+version: "3"
+
+vars:
+  # Application
+  APP_SLUG: '{{ .REPLICATED_APP | default "groovelab" }}'
+  CHANNEL: '{{ .CHANNEL | default "stable" }}'
+
+  # Images
+  IMAGE_REGISTRY: ghcr.io/adamancini
+  IMAGE_TAG:
+    sh: git rev-parse --short HEAD
+
+  # Cluster
+  CLUSTER_NAME: '{{ .CLUSTER_NAME | default "groovelab-dev" }}'
+  KUBECONFIG_FILE: '{{ .KUBECONFIG_FILE | default (printf "./%s.kubeconfig" .CLUSTER_NAME) }}'
+  K8S_DISTRIBUTION: '{{ .K8S_DISTRIBUTION | default "k3s" }}'
+  K8S_VERSION: '{{ .K8S_VERSION | default "1.32" }}'
+  CLUSTER_TTL: '{{ .CLUSTER_TTL | default "4h" }}'
+
+  # Helm
+  HELM_ENV: '{{ .HELM_ENV | default "dev" }}'
+  NAMESPACE: groovelab
+
+silent: true
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list
+
+  # ── Dependencies ─────────────────────────────────────────────────────────
+
+  deps:
+    desc: Update Helm chart dependencies (subcharts)
+    cmds:
+      - echo "Updating chart dependencies..."
+      - helm dependency update chart/
+      - echo "Done."
+
+  lint:
+    desc: Lint the Helm chart
+    cmds:
+      - helm lint chart/ -f chart/values.yaml -f chart/values-dev.yaml
+
+  template:
+    desc: Render chart templates to stdout (dev environment)
+    cmds:
+      - helm template groovelab chart/
+          -f chart/values.yaml
+          -f chart/values-dev.yaml
+          --set cloudnative-pg.enabled=false
+
+  # ── Image build & push ───────────────────────────────────────────────────
+
+  image:build:
+    desc: Build frontend and backend images (linux/amd64)
+    cmds:
+      - echo "Building frontend:{{.IMAGE_TAG}}..."
+      - docker buildx build --platform linux/amd64
+          -t {{.IMAGE_REGISTRY}}/groovelab-frontend:{{.IMAGE_TAG}}
+          -t {{.IMAGE_REGISTRY}}/groovelab-frontend:latest
+          frontend/
+      - echo "Building backend:{{.IMAGE_TAG}}..."
+      - docker buildx build --platform linux/amd64
+          -t {{.IMAGE_REGISTRY}}/groovelab-backend:{{.IMAGE_TAG}}
+          -t {{.IMAGE_REGISTRY}}/groovelab-backend:latest
+          backend/
+
+  image:push:
+    desc: Push frontend and backend images to GHCR
+    cmds:
+      - echo "Pushing frontend:{{.IMAGE_TAG}}..."
+      - docker push {{.IMAGE_REGISTRY}}/groovelab-frontend:{{.IMAGE_TAG}}
+      - docker push {{.IMAGE_REGISTRY}}/groovelab-frontend:latest
+      - echo "Pushing backend:{{.IMAGE_TAG}}..."
+      - docker push {{.IMAGE_REGISTRY}}/groovelab-backend:{{.IMAGE_TAG}}
+      - docker push {{.IMAGE_REGISTRY}}/groovelab-backend:latest
+
+  image:build-push:
+    desc: Build and push both images (shortcut for image:build + image:push)
+    cmds:
+      - echo "Building and pushing frontend:{{.IMAGE_TAG}}..."
+      - docker buildx build --platform linux/amd64
+          -t {{.IMAGE_REGISTRY}}/groovelab-frontend:{{.IMAGE_TAG}}
+          -t {{.IMAGE_REGISTRY}}/groovelab-frontend:latest
+          --push frontend/
+      - echo "Building and pushing backend:{{.IMAGE_TAG}}..."
+      - docker buildx build --platform linux/amd64
+          -t {{.IMAGE_REGISTRY}}/groovelab-backend:{{.IMAGE_TAG}}
+          -t {{.IMAGE_REGISTRY}}/groovelab-backend:latest
+          --push backend/
+      - echo "Images pushed at tag {{.IMAGE_TAG}}."
+
+  # ── Cluster lifecycle ────────────────────────────────────────────────────
+
+  cluster:create:
+    desc: Create a CMX cluster for UAT (CLUSTER_NAME, K8S_VERSION, CLUSTER_TTL)
+    status:
+      - replicated cluster ls --output json |
+          jq -e --arg n "{{.CLUSTER_NAME}}" '.[] | select(.name == $n) | .status == "running"'
+    cmds:
+      - echo "Creating cluster {{.CLUSTER_NAME}}..."
+      - replicated cluster create
+          --name {{.CLUSTER_NAME}}
+          --distribution {{.K8S_DISTRIBUTION}}
+          --version {{.K8S_VERSION}}
+          --ttl {{.CLUSTER_TTL}}
+      - echo "Waiting for cluster to become running..."
+      - |
+        for i in $(seq 1 60); do
+          STATUS=$(replicated cluster ls --output json | jq -r --arg n "{{.CLUSTER_NAME}}" '.[] | select(.name == $n) | .status')
+          echo "  [${i}/60] status: ${STATUS}"
+          [ "$STATUS" = "running" ] && break
+          sleep 5
+        done
+      - echo "Cluster {{.CLUSTER_NAME}} is ready."
+
+  cluster:kubeconfig:
+    desc: Merge UAT cluster kubeconfig into ~/.kube/config and save a local copy
+    cmds:
+      - |
+        CLUSTER_ID=$(replicated cluster ls --output json |
+          jq -r --arg n "{{.CLUSTER_NAME}}" '.[] | select(.name == $n) | .id')
+        if [ -z "$CLUSTER_ID" ]; then
+          echo "Cluster {{.CLUSTER_NAME}} not found"; exit 1
+        fi
+        replicated cluster kubeconfig "$CLUSTER_ID"
+        echo "Context: k3s-${CLUSTER_ID}-default"
+
+  cluster:delete:
+    desc: Delete the UAT cluster and remove its local kubeconfig
+    cmds:
+      - |
+        CLUSTER_ID=$(replicated cluster ls --output json |
+          jq -r --arg n "{{.CLUSTER_NAME}}" '.[] | select(.name == $n) | .id')
+        if [ -z "$CLUSTER_ID" ]; then
+          echo "No cluster named {{.CLUSTER_NAME}} found."
+          exit 0
+        fi
+        echo "Deleting cluster $CLUSTER_ID ({{.CLUSTER_NAME}})..."
+        replicated cluster rm "$CLUSTER_ID"
+      - rm -f {{.KUBECONFIG_FILE}}
+
+  # ── Dev install (local chart, GHCR images) ───────────────────────────────
+
+  dev:pull-secret:
+    desc: Create the GHCR imagePullSecret in the groovelab namespace
+    vars:
+      CONTEXT: '{{ .CONTEXT | default "" }}'
+    cmds:
+      - |
+        KUBECTL="kubectl{{ if .CONTEXT }} --context={{.CONTEXT}}{{ end }}"
+        $KUBECTL create namespace {{.NAMESPACE}} --dry-run=client -o yaml | $KUBECTL apply -f -
+        GHCR_USER=$(docker-credential-desktop get <<< "ghcr.io" 2>/dev/null |
+          python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Username'])")
+        GHCR_TOKEN=$(docker-credential-desktop get <<< "ghcr.io" 2>/dev/null |
+          python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Secret'])")
+        $KUBECTL create secret docker-registry ghcr-pull-secret \
+          --namespace {{.NAMESPACE}} \
+          --docker-server=ghcr.io \
+          --docker-username="$GHCR_USER" \
+          --docker-password="$GHCR_TOKEN" \
+          --dry-run=client -o yaml | $KUBECTL apply -f -
+        echo "ghcr-pull-secret created/updated."
+
+  dev:install:
+    desc: Install groovelab via helmfile (dev environment, local chart + GHCR images)
+    cmds:
+      - echo "Installing groovelab (dev)..."
+      - HELMFILE_ENVIRONMENT=dev helmfile sync
+      - echo "Done. Run 'task dev:port-forward' to access the app."
+
+  dev:upgrade:
+    desc: Upgrade groovelab via helmfile (dev environment)
+    cmds:
+      - HELMFILE_ENVIRONMENT=dev helmfile sync
+
+  dev:uninstall:
+    desc: Uninstall groovelab (dev environment)
+    cmds:
+      - HELMFILE_ENVIRONMENT=dev helmfile destroy
+
+  dev:port-forward:
+    desc: Port-forward groovelab frontend to http://localhost:8080
+    vars:
+      CONTEXT: '{{ .CONTEXT | default "" }}'
+    cmds:
+      - |
+        KUBECTL="kubectl{{ if .CONTEXT }} --context={{.CONTEXT}}{{ end }}"
+        echo "Forwarding https://localhost:8443 -> groovelab-frontend:443"
+        echo "App available at http://localhost:8443  (nginx handles TLS termination internally)"
+        $KUBECTL port-forward -n {{.NAMESPACE}} svc/groovelab-frontend 8443:443
+
+  dev:setup:
+    desc: "Full dev setup: create CMX cluster, pull GHCR secret, install app"
+    cmds:
+      - task: cluster:create
+      - task: cluster:kubeconfig
+      - |
+        CLUSTER_ID=$(replicated cluster ls --output json |
+          jq -r --arg n "{{.CLUSTER_NAME}}" '.[] | select(.name == $n) | .id')
+        CONTEXT="k3s-${CLUSTER_ID}-default"
+        echo "Using context: $CONTEXT"
+        # Pass the context to sub-tasks
+        task dev:pull-secret CONTEXT="$CONTEXT"
+        KUBECONFIG=~/.kube/config HELMFILE_ENVIRONMENT=dev helmfile sync
+      - echo "Setup complete."
+
+  # ── Customer install (OCI chart, proxy registry images) ──────────────────
+
+  customer:install:
+    desc: "Install as a Replicated customer (requires LICENSE_ID env var)"
+    cmds:
+      - |
+        if [ -z "$LICENSE_ID" ]; then
+          echo "Error: LICENSE_ID env var is required."
+          echo "  export LICENSE_ID=<your-license-id>"
+          exit 1
+        fi
+        # Authenticate against the Replicated OCI registry.
+        # Replicated pre-populates global.replicated.dockerconfigjson and all
+        # license metadata in the chart values at publish time — no manual
+        # credential construction required.
+        echo "$LICENSE_ID" | helm registry login registry.replicated.com \
+          --username "$LICENSE_ID" --password-stdin
+        echo "Installing groovelab (replicated environment)..."
+        HELMFILE_ENVIRONMENT=replicated helmfile sync
+
+  customer:uninstall:
+    desc: Uninstall groovelab (replicated environment)
+    cmds:
+      - |
+        if [ -z "$LICENSE_ID" ]; then
+          echo "Error: LICENSE_ID env var is required."
+          exit 1
+        fi
+        HELMFILE_ENVIRONMENT=replicated helmfile destroy
+
+  # ── Replicated release management ────────────────────────────────────────
+
+  release:create:
+    desc: "Create and promote a Replicated release (CHANNEL default: stable)"
+    cmds:
+      - |
+        echo "Packaging chart..."
+        helm package chart/ -d /tmp/groovelab-release/
+        echo "Creating release on channel {{.CHANNEL}}..."
+        replicated release create \
+          --app {{.APP_SLUG}} \
+          --chart /tmp/groovelab-release/groovelab-*.tgz \
+          --promote {{.CHANNEL}}
+        rm -rf /tmp/groovelab-release/
+        echo "Release created and promoted to {{.CHANNEL}}."
+
+  release:create-from-dir:
+    desc: Create release from release/ YAML directory (KOTS channel)
+    cmds:
+      - replicated release create
+          --app {{.APP_SLUG}}
+          --yaml-dir release/
+          --promote {{.CHANNEL}}

@@ -1,0 +1,120 @@
+helmDefaults:
+  verify: false
+  wait: true
+  timeout: 600
+  atomic: true
+  cleanupOnFail: true
+
+environments:
+  # ── dev ──────────────────────────────────────────────────────────────────
+  # Local developer install: images pulled directly from GHCR, chart sourced
+  # from the local working tree. No Replicated license credentials required.
+  # Pre-requisite: create GHCR pull secret before helmfile sync:
+  #   kubectl create secret docker-registry ghcr-pull-secret \
+  #     --docker-server=ghcr.io --docker-username=<user> --docker-password=<pat> \
+  #     -n groovelab
+  dev:
+    values:
+      - chartSources:
+          cnpg: ./chart/charts/cloudnative-pg
+          groovelab: ./chart
+      - chartVersions:
+          cnpg: '{{ exec "yq" (list ".version" "./chart/charts/cloudnative-pg/Chart.yaml") }}'
+          groovelab: '{{ exec "yq" (list ".version" "./chart/Chart.yaml") }}'
+      - imageRegistry:
+          frontend: ghcr.io/adamancini/groovelab-frontend
+          backend: ghcr.io/adamancini/groovelab-backend
+      - imagePullPolicy: Always
+      - pullSecretName: ghcr-pull-secret
+      - replicatedEnabled: false
+
+  # ── replicated ────────────────────────────────────────────────────────────
+  # Customer install: images proxied through proxy.xyyzx.net, chart sourced
+  # from the Replicated OCI registry.
+  # Required env vars: LICENSE_ID, CHANNEL (default: stable), REPLICATED_APP (default: groovelab)
+  #
+  # When the chart is pulled from the OCI registry, Replicated pre-populates:
+  #   global.replicated.dockerconfigjson  (proxy pull-secret credentials)
+  #   global.replicated.licenseID / licenseFields / channelName / customerName
+  #   replicated.*  (SDK channel metadata, license body, injected values)
+  # None of those need to be set manually here.
+  replicated:
+    values:
+      - app: '{{ env "REPLICATED_APP" | default "groovelab" }}'
+      - channel: '{{ env "CHANNEL" | default "stable" }}'
+      - licenseID: '{{ env "LICENSE_ID" }}'
+      - chartSources:
+          cnpg: ./chart/charts/cloudnative-pg
+          groovelab: 'oci://registry.replicated.com/{{ env "REPLICATED_APP" | default "groovelab" }}/{{ env "CHANNEL" | default "stable" }}/groovelab'
+      - chartVersions:
+          cnpg: '{{ exec "yq" (list ".version" "./chart/charts/cloudnative-pg/Chart.yaml") }}'
+          groovelab: '{{ exec "yq" (list ".version" "./chart/Chart.yaml") }}'
+      - imageRegistry:
+          # Replicated injects the correct proxy prefix into values.yaml at publish
+          # time, so these match what's already in the chart's values.
+          frontend: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-frontend
+          backend: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-backend
+      - imagePullPolicy: IfNotPresent
+      - pullSecretName: ""
+      - replicatedEnabled: true
+---
+{{- if eq .Environment.Name "replicated" }}
+repositories:
+  - name: registry.replicated.com
+    oci: true
+    url: registry.replicated.com
+    username: '{{ .Values.licenseID }}'
+    password: '{{ .Values.licenseID }}'
+{{- end }}
+
+releases:
+  # ── CNPG operator ─────────────────────────────────────────────────────────
+  # Installed as a separate release so its CRDs are established before the
+  # groovelab release validates the postgresql.cnpg.io/v1 Cluster resource.
+  - name: cnpg
+    namespace: cnpg-system
+    createNamespace: true
+    chart: {{ .Values.chartSources.cnpg }}
+    version: {{ .Values.chartVersions.cnpg }}
+    skipDeps: true
+    wait: true
+
+  # ── Groovelab application ─────────────────────────────────────────────────
+  - name: groovelab
+    namespace: groovelab
+    createNamespace: true
+    chart: {{ .Values.chartSources.groovelab }}
+    version: {{ .Values.chartVersions.groovelab }}
+    skipDeps: true
+    # Ensure CNPG CRDs exist before Helm validates the Cluster resource.
+    needs:
+      - cnpg-system/cnpg
+    values:
+      # Start from the base chart values, then apply environment overrides below.
+      - chart/values.yaml
+      # Environment-specific overrides expressed as inline YAML.
+      - image:
+          frontend:
+            repository: {{ .Values.imageRegistry.frontend }}
+            pullPolicy: {{ .Values.imagePullPolicy }}
+          backend:
+            repository: {{ .Values.imageRegistry.backend }}
+            pullPolicy: {{ .Values.imagePullPolicy }}
+        cloudnative-pg:
+          # CNPG operator is managed as a separate helmfile release (see above).
+          enabled: false
+        replicated:
+          enabled: {{ .Values.replicatedEnabled }}
+{{- if eq .Environment.Name "dev" }}
+        # dev: empty dockerconfigjson — _helpers.tpl guards on truthiness so
+        # enterprise-pull-secret is not added to pod imagePullSecrets.
+        global:
+          replicated:
+            dockerconfigjson: ""
+        images:
+          pullSecrets:
+            - {{ .Values.pullSecretName }}
+{{- end }}
+        # replicated environment: global.replicated.dockerconfigjson and all
+        # license metadata are pre-populated by Replicated when the chart is
+        # pulled from the OCI registry — no manual overrides needed.

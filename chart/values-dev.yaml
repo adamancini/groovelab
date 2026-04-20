@@ -1,0 +1,51 @@
+# values-dev.yaml -- Overrides for local development and UAT installs.
+#
+# Usage (create the GHCR pull secret first, then install):
+#
+#   kubectl create secret docker-registry ghcr-pull-secret \
+#     --docker-server=ghcr.io \
+#     --docker-username=<github-user> \
+#     --docker-password=<ghcr-pat> \
+#     -n groovelab
+#
+#   helm install groovelab chart/ \
+#     -f chart/values-dev.yaml \
+#     --set cert-manager.enabled=true \
+#     --set cloudnative-pg.enabled=false   # if CNPG is pre-installed
+#
+# To test the Replicated SDK as well, replace `replicated.enabled: false` with:
+#   replicated:
+#     enabled: true
+#     integration:
+#       enabled: true
+#       licenseID: "<your-dev-customer-license-id>"
+#
+# What this does:
+#   - Pulls images directly from GHCR (bypasses proxy.xyyzx.net)
+#   - Disables the Replicated SDK (no license credentials needed)
+#   - Skips enterprise-pull-secret creation
+
+# Pull directly from GHCR rather than through the Replicated proxy registry.
+image:
+  frontend:
+    repository: ghcr.io/adamancini/groovelab-frontend
+    pullPolicy: Always
+  backend:
+    repository: ghcr.io/adamancini/groovelab-backend
+    pullPolicy: Always
+
+# Point every deployment at the GHCR pull secret (see creation command above).
+images:
+  pullSecrets:
+    - ghcr-pull-secret
+
+# Disable the Replicated SDK for dev installs — no license credentials needed.
+# App functionality (flashcards, auth, progress) works without it.
+replicated:
+  enabled: false
+
+# No proxy-registry dockerconfigjson — leave empty so enterprise-pull-secret
+# is not referenced in pod specs (guarded by truthiness check in _helpers.tpl).
+global:
+  replicated:
+    dockerconfigjson: ""
