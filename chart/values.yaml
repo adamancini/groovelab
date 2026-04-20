@@ -76,3 +76,9 @@ replicated:
 airgap:
   networkPolicy:
     enabled: false
+
+features:
+  trackExport:
+    # enabled is controlled by the track_export_enabled license entitlement field.
+    # Default false; overridden by KOTS HelmChart CR or operator --set flag.
+    enabled: "false"
