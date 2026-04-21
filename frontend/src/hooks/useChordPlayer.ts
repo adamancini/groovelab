@@ -1,40 +1,44 @@
 /**
  * useChordPlayer -- Tone.js-backed chord playback hook.
  *
- * Lazily initializes a Tone.Sampler loaded with piano samples from
- * `gleitz/midi-js-soundfonts` (MIT, CDN-hosted). The sampler is not
- * created until the first call to playChord(); this avoids loading
- * anything on page mount and keeps the audio context suspended until
- * the user actually triggers playback (a Web Audio best practice).
+ * Lazily initializes a Tone.Sampler loaded with the Salamander Grand Piano
+ * sample set (CDN-hosted on tonejs.github.io — the canonical Tone.js
+ * sample set, every URL in the map is verified to exist). The sampler is
+ * not created until the first call to playChord(); this avoids loading
+ * anything on page mount and keeps the audio context suspended until the
+ * user actually triggers playback (a Web Audio best practice).
  *
  * Expected caller contract:
  * - Pass chordNotes as a space-separated string like "G B Eb".
  * - Notes are voiced at octave 4 (mid-range piano).
  * - Calling with null/empty chordNotes is a no-op.
+ *
+ * Browser autoplay policy: AudioContext can only start from a user
+ * gesture (click/keypress). The first playChord() call on page mount
+ * will fail silently to resume the context; any subsequent user
+ * interaction primes it and later cards play normally.
  */
 
 import { useCallback, useEffect, useRef } from "react";
 import * as Tone from "tone";
 
 /**
- * CDN base for acoustic grand piano samples. The Tone.Sampler will request
- * individual note MP3s from this directory lazily — only notes referenced
- * in our URL map are downloaded.
+ * Canonical Tone.js sample set. Every note in the URL map has a matching
+ * MP3 on the CDN — confirmed in Tone.js docs and examples.
  */
-const SAMPLE_BASE = "https://gleitz.github.io/midi-js-soundfonts/MusyngKite/acoustic_grand_piano-mp3/";
+const SAMPLE_BASE = "https://tonejs.github.io/audio/salamander/";
 
 /**
- * A small map of reference samples the sampler interpolates between. We
- * only need a handful of real samples to cover the range we care about
- * (roughly octave 3-5); Tone.Sampler pitch-shifts to cover gaps.
+ * Reference A-octave samples the sampler interpolates between. Five
+ * anchors from A1..A5 cover three-plus octaves of chord range; Tone.Sampler
+ * pitch-shifts to cover in-between notes.
  */
 const SAMPLE_URLS: Record<string, string> = {
-  C3: "C3.mp3",
-  C4: "C4.mp3",
-  C5: "C5.mp3",
-  "F#3": "Fs3.mp3",
-  "F#4": "Fs4.mp3",
-  "F#5": "Fs5.mp3",
+  A1: "A1.mp3",
+  A2: "A2.mp3",
+  A3: "A3.mp3",
+  A4: "A4.mp3",
+  A5: "A5.mp3",
 };
 
 const CHORD_RELEASE_SECONDS = 2;
@@ -95,14 +99,27 @@ export function useChordPlayer(): ChordPlayer {
       if (notes.length === 0) return;
 
       const sampler = ensureSampler();
-      // Resume the audio context on the first user-triggered play.
+      // Try to resume the audio context. The browser only allows resume
+      // from a direct user gesture, so this silently no-ops on auto-play
+      // paths. A subsequent user click (replay, answer, skip) will prime
+      // the context and later calls succeed.
       if (Tone.getContext().state !== "running") {
-        void Tone.start();
+        void Tone.start().catch(() => {
+          /* no user gesture yet; later interactions will prime the context */
+        });
       }
-      // Wait for samples to load before triggering (no-op if already loaded).
-      void Tone.loaded().then(() => {
-        sampler.triggerAttackRelease(notes, CHORD_RELEASE_SECONDS);
-      });
+      // Wait for samples to load, then trigger. Swallow load failures so
+      // a 404 on the CDN doesn't break the UI.
+      void Tone.loaded()
+        .then(() => {
+          // If the context still can't start, skip this play rather than
+          // throwing "buffer not loaded" into the console.
+          if (Tone.getContext().state !== "running") return;
+          sampler.triggerAttackRelease(notes, CHORD_RELEASE_SECONDS);
+        })
+        .catch((err) => {
+          console.warn("[chord-player] playback skipped:", err);
+        });
     },
     [ensureSampler],
   );
