@@ -33,11 +33,15 @@ function renderFretboardRef() {
 }
 
 // Mock fetch for auth check and tuning presets API.
+// Returns the RAW backend shape (stringCount, pitches with octaves, low-to-high)
+// so the fetchTuningPresets transform is exercised in integration.
 const MOCK_TUNING_PRESETS = DEFAULT_TUNING_PRESETS.map((p) => ({
   id: p.id,
   name: p.name,
-  strings: p.strings,
-  notes: p.notes,
+  stringCount: p.strings,
+  // Reverse to low-to-high and append a placeholder octave to each note.
+  pitches: [...p.notes].reverse().map((n) => `${n}2`),
+  isDefault: true,
 }));
 
 beforeEach(() => {

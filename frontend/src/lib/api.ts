@@ -290,9 +290,62 @@ export interface TuningPreset {
   notes: string[];
 }
 
+/**
+ * Raw tuning preset as sent by the backend. The Go struct tags emit
+ * camelCase `stringCount` and `pitches` (a JSONB array of low-to-high
+ * pitches with octave numbers, e.g. `["E1","A1","D2","G2"]`). We must
+ * transform this into the frontend `TuningPreset` shape (`strings`,
+ * `notes` without octaves, high-to-low).
+ */
+interface RawTuningPreset {
+  id: string;
+  name: string;
+  stringCount: number;
+  pitches: string[] | string;
+  isDefault?: boolean;
+}
+
+/** Strip an optional trailing octave number from a pitch string (e.g. "Eb1" -> "Eb"). */
+function stripOctave(pitch: string): string {
+  const match = pitch.match(/^([A-Ga-g][#b]?)\d*$/);
+  return match ? match[1] : pitch;
+}
+
+/**
+ * Map an API-shaped tuning preset to the frontend shape. Handles both
+ * array-typed and string-typed (not-yet-parsed) `pitches`, strips octave
+ * numbers, and reverses low-to-high -> high-to-low ordering.
+ */
+export function transformTuningPreset(raw: RawTuningPreset): TuningPreset {
+  let pitches: string[];
+  if (Array.isArray(raw.pitches)) {
+    pitches = raw.pitches;
+  } else if (typeof raw.pitches === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw.pitches);
+      pitches = Array.isArray(parsed) ? (parsed as string[]) : [];
+    } catch {
+      pitches = [];
+    }
+  } else {
+    pitches = [];
+  }
+
+  // Low-to-high -> high-to-low; strip octaves.
+  const notes = pitches.map(stripOctave).reverse();
+
+  return {
+    id: raw.id,
+    name: raw.name,
+    strings: raw.stringCount,
+    notes,
+  };
+}
+
 /** GET /api/v1/fretboard/tunings -- list tuning presets. */
-export function fetchTuningPresets(): Promise<TuningPreset[]> {
-  return apiRequest<TuningPreset[]>("/fretboard/tunings");
+export async function fetchTuningPresets(): Promise<TuningPreset[]> {
+  const raw = await apiRequest<RawTuningPreset[]>("/fretboard/tunings");
+  return raw.map(transformTuningPreset);
 }
 
 /** PUT /api/v1/settings -- save user settings (e.g. tuning preference). */
