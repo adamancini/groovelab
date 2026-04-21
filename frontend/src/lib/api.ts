@@ -83,8 +83,18 @@ function shuffle<T>(arr: T[]): T[] {
 
 function transformSessionCard(raw: RawSessionCard): Flashcard {
   const questionText = raw.question.prompt;
-  // name_to_notes: options are notes strings; notes_to_name: options are name strings.
-  const answerKey: string = raw.direction === "notes_to_name" ? "name" : "notes";
+  // Answer axis varies by direction:
+  //   name_to_notes    -> options are notes strings
+  //   notes_to_name    -> options are chord-name strings
+  //   type_to_intervals -> options are interval-signature strings (e.g. "1-3-5")
+  let answerKey: string;
+  if (raw.direction === "type_to_intervals") {
+    answerKey = "intervals";
+  } else if (raw.direction === "notes_to_name") {
+    answerKey = "name";
+  } else {
+    answerKey = "notes";
+  }
 
   const optionAnswers: Record<string, string> = {};
   const labels: string[] = [];

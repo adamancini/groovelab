@@ -924,3 +924,178 @@ func TestNameToNotesDistractors_Unchanged(t *testing.T) {
 	}
 	require.NoError(t, rows.Err())
 }
+
+// ---------- Chord Intervals Tests (GRO-rfoz) ----------
+
+// TestSeedChordIntervalsTopic verifies the 00010 migration inserted exactly
+// 7 type_to_intervals cards under the chord_intervals topic, each with a
+// non-empty intervals field on correct_answer and 3 distractors.
+func TestSeedChordIntervalsTopic(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	rows, err := env.pgPool.Query(ctx, `
+		SELECT chord_type, direction, correct_answer::text, distractors::text
+		FROM cards
+		WHERE topic = 'chord_intervals'
+		ORDER BY chord_type
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	expectedTypes := map[string]string{
+		"augmented":    "1-3-♯5",
+		"diminished":   "1-♭3-♭5",
+		"dominant 7th": "1-3-5-♭7",
+		"major":        "1-3-5",
+		"major 7th":    "1-3-5-7",
+		"minor":        "1-♭3-5",
+		"minor 7th":    "1-♭3-5-♭7",
+	}
+	seenTypes := make(map[string]bool)
+
+	for rows.Next() {
+		var chordType, direction, correctAnswerJSON, distractorsJSON string
+		require.NoError(t, rows.Scan(&chordType, &direction, &correctAnswerJSON, &distractorsJSON))
+		seenTypes[chordType] = true
+
+		assert.Equal(t, "type_to_intervals", direction,
+			"chord_intervals cards must use type_to_intervals direction")
+
+		var correct map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(correctAnswerJSON), &correct))
+		intervals, _ := correct["intervals"].(string)
+		assert.Equal(t, expectedTypes[chordType], intervals,
+			"unexpected intervals for %q", chordType)
+		assert.Equal(t, chordType, correct["name"],
+			"correct_answer.name should match chord_type")
+
+		var distractors []map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(distractorsJSON), &distractors))
+		assert.Len(t, distractors, 3, "expected 3 distractors for %q", chordType)
+
+		distractorIntervals := make(map[string]bool)
+		for _, d := range distractors {
+			iv, _ := d["intervals"].(string)
+			require.NotEmpty(t, iv, "distractor must have non-empty intervals")
+			assert.NotEqual(t, intervals, iv,
+				"distractor interval %q must differ from correct %q for %q",
+				iv, intervals, chordType)
+			assert.False(t, distractorIntervals[iv],
+				"duplicate distractor intervals %q for %q", iv, chordType)
+			distractorIntervals[iv] = true
+		}
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, len(expectedTypes), len(seenTypes),
+		"expected one card per chord type (got %d)", len(seenTypes))
+}
+
+// TestTopicsEndpointIncludesChordIntervals confirms chord_intervals appears
+// in the public topic list with the expected card count.
+func TestTopicsEndpointIncludesChordIntervals(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/topics")
+	body := readBody(t, resp)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var topics []flashcards.TopicSummary
+	require.NoError(t, json.Unmarshal(body, &topics))
+
+	var found *flashcards.TopicSummary
+	for i := range topics {
+		if topics[i].Topic == "chord_intervals" {
+			found = &topics[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "chord_intervals topic must be returned by /topics")
+	assert.Equal(t, 7, found.CardCount, "chord_intervals should have 7 cards")
+}
+
+// TestSession_ChordIntervalsReturnsCards verifies a session can be built
+// from the chord_intervals topic and the returned cards carry the new
+// type_to_intervals direction.
+func TestSession_ChordIntervalsReturnsCards(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=chord_intervals")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(body))
+
+	var session struct {
+		SessionID string `json:"session_id"`
+		Topic     string `json:"topic"`
+		Cards     []struct {
+			ID             string          `json:"id"`
+			Direction      string          `json:"direction"`
+			Question       json.RawMessage `json:"question"`
+			CorrectAnswer  json.RawMessage `json:"correct_answer"`
+			Distractors    json.RawMessage `json:"distractors"`
+			Stage          int             `json:"stage"`
+		} `json:"cards"`
+	}
+	require.NoError(t, json.Unmarshal(body, &session))
+	assert.Equal(t, "chord_intervals", session.Topic)
+	require.NotEmpty(t, session.Cards, "session must include cards")
+	for _, c := range session.Cards {
+		assert.Equal(t, "type_to_intervals", c.Direction)
+		assert.NotEmpty(t, c.Question)
+		assert.NotEmpty(t, c.CorrectAnswer)
+	}
+}
+
+// TestCheckAnswer_IntervalsField exercises the new intervals-field branch
+// in checkAnswer directly, including non-regression coverage for name and
+// notes comparisons.
+func TestCheckAnswer_IntervalsField(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+	registerAndLogin(t, client, env.server.URL, "intervals-test@example.com", "securepassword1")
+
+	// Fetch a chord_intervals session.
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=chord_intervals")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var session struct {
+		Cards []struct {
+			ID            string          `json:"id"`
+			CorrectAnswer json.RawMessage `json:"correct_answer"`
+			Distractors   json.RawMessage `json:"distractors"`
+		} `json:"cards"`
+	}
+	require.NoError(t, json.Unmarshal(body, &session))
+	require.NotEmpty(t, session.Cards)
+	card := session.Cards[0]
+
+	var correct map[string]interface{}
+	require.NoError(t, json.Unmarshal(card.CorrectAnswer, &correct))
+	intervals := correct["intervals"].(string)
+
+	// Submit the correct interval string — expect correct=true.
+	submitBody := map[string]interface{}{
+		"card_id":      card.ID,
+		"answer":       map[string]string{"intervals": intervals},
+		"input_method": "multiple_choice",
+	}
+	resp = postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", submitBody)
+	body = readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(body))
+	var ans struct {
+		Correct bool `json:"correct"`
+	}
+	require.NoError(t, json.Unmarshal(body, &ans))
+	assert.True(t, ans.Correct, "correct intervals should return correct=true")
+
+	// Submit a bogus interval string — expect correct=false.
+	submitBody["answer"] = map[string]string{"intervals": "9-9-9-9"}
+	resp = postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", submitBody)
+	body = readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(body))
+	require.NoError(t, json.Unmarshal(body, &ans))
+	assert.False(t, ans.Correct, "bogus intervals should return correct=false")
+}

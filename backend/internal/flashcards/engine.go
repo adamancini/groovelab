@@ -215,6 +215,17 @@ func checkAnswer(correctAnswer, submittedAnswer json.RawMessage) bool {
 		return false
 	}
 
+	// Compare "intervals" field first: type_to_intervals cards use this
+	// axis and both "name" and "intervals" may be present on the correct
+	// answer. Checking intervals first ensures we compare the field the
+	// UI actually submits. Non-interval cards omit this field, so the
+	// block is a no-op for them.
+	if ci, ok := correct["intervals"]; ok {
+		if si, ok := submitted["intervals"]; ok {
+			return ci == si
+		}
+	}
+
 	// Compare "name" field if present in both.
 	if cn, ok := correct["name"]; ok {
 		if sn, ok := submitted["name"]; ok {
