@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -820,4 +821,106 @@ func TestAdaptiveEngine_BuildSession_RespectsDistribution(t *testing.T) {
 		"new cards must not exceed %d", flashcards.MaxNewPerSession)
 	assert.LessOrEqual(t, buckets["mastered"], 5,
 		"mastered cards should not dominate the session")
+}
+
+// ---------- Distractor Quality Tests (GRO-4xts) ----------
+
+// TestNotesToNameDistractors_SameRootDifferentQuality verifies that every
+// notes_to_name card has 3 distractors that share the correct card's root
+// note (key_signature) but use different chord qualities.
+func TestNotesToNameDistractors_SameRootDifferentQuality(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	rows, err := env.pgPool.Query(ctx, `
+		SELECT id, key_signature, chord_type, distractors::text
+		FROM cards
+		WHERE direction = 'notes_to_name'
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	cardCount := 0
+	for rows.Next() {
+		var id, keySig, chordType, distractorsJSON string
+		require.NoError(t, rows.Scan(&id, &keySig, &chordType, &distractorsJSON))
+		cardCount++
+
+		var distractors []map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(distractorsJSON), &distractors),
+			"card %s: distractors must be valid JSON array", id)
+		require.Len(t, distractors, 3, "card %s: expected exactly 3 distractors", id)
+
+		seenQualities := make(map[string]bool)
+		for _, d := range distractors {
+			name, _ := d["name"].(string)
+			notes, _ := d["notes"].(string)
+			require.NotEmpty(t, name, "card %s: distractor must have non-empty name", id)
+			require.NotEmpty(t, notes, "card %s: distractor must have non-empty notes", id)
+
+			// Name format is "<root> <quality>"; first token must match card key_signature.
+			parts := strings.SplitN(name, " ", 2)
+			require.Len(t, parts, 2, "card %s: distractor name %q must be '<root> <quality>'", id, name)
+			assert.Equal(t, keySig, parts[0],
+				"card %s (correct %s %s): distractor root %q should match card root",
+				id, keySig, chordType, parts[0])
+
+			// Quality must differ from correct quality.
+			assert.NotEqual(t, chordType, parts[1],
+				"card %s: distractor quality %q must differ from correct %q",
+				id, parts[1], chordType)
+
+			// Distractor qualities must be unique within a card.
+			assert.False(t, seenQualities[parts[1]],
+				"card %s: duplicate distractor quality %q", id, parts[1])
+			seenQualities[parts[1]] = true
+		}
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, 84, cardCount,
+		"expected 84 notes_to_name cards (12 keys x 7 chord types), got %d", cardCount)
+}
+
+// TestNameToNotesDistractors_Unchanged verifies that the 00009 migration did
+// NOT modify distractors on name_to_notes cards. These keep their original
+// cross-root same-quality distractors.
+func TestNameToNotesDistractors_Unchanged(t *testing.T) {
+	env := setupTestEnv(t)
+	ctx := context.Background()
+
+	rows, err := env.pgPool.Query(ctx, `
+		SELECT id, key_signature, chord_type, distractors::text
+		FROM cards
+		WHERE direction = 'name_to_notes'
+	`)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	// For name_to_notes, distractor names follow pattern "<other-root> <same-quality>".
+	// At least one distractor should have a root different from the card's key_signature.
+	for rows.Next() {
+		var id, keySig, chordType, distractorsJSON string
+		require.NoError(t, rows.Scan(&id, &keySig, &chordType, &distractorsJSON))
+
+		var distractors []map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(distractorsJSON), &distractors))
+		require.Len(t, distractors, 3)
+
+		differentRootSeen := false
+		for _, d := range distractors {
+			name, _ := d["name"].(string)
+			parts := strings.SplitN(name, " ", 2)
+			require.Len(t, parts, 2)
+			if parts[0] != keySig {
+				differentRootSeen = true
+			}
+			// For name_to_notes, quality should remain identical across distractors.
+			assert.Equal(t, chordType, parts[1],
+				"card %s: name_to_notes distractor should keep same quality as correct", id)
+		}
+		assert.True(t, differentRootSeen,
+			"card %s (%s %s, name_to_notes): at least one distractor should have a different root",
+			id, keySig, chordType)
+	}
+	require.NoError(t, rows.Err())
 }
