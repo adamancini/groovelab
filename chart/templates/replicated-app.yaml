@@ -1,3 +1,4 @@
+{{- if .Values.replicated.enabled }}
 apiVersion: kots.io/v1beta1
 kind: Application
 metadata:
@@ -14,3 +15,4 @@ spec:
       servicePort: 443
       localPort: 443
       applicationUrl: "https://groovelab.local"
+{{- end }}
