@@ -114,6 +114,14 @@ releases:
         images:
           pullSecrets:
             - {{ .Values.pullSecretName }}
+        # dev: NodePort on 30080 so `replicated cluster port expose` can
+        # route public traffic to the frontend without a per-session
+        # port-forward. Port 80 is the service port; nginx in the pod
+        # terminates on containerPort 8080.
+        service:
+          type: NodePort
+          port: 80
+          nodePort: 30080
 {{- end }}
         # replicated environment: global.replicated.dockerconfigjson and all
         # license metadata are pre-populated by Replicated when the chart is
