@@ -61,7 +61,7 @@ valkey:
   enabled: true
   image:
     repository: valkey/valkey
-    tag: "8"
+    tag: "9"
   storage:
     size: 1Gi
 
