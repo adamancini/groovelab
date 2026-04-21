@@ -88,9 +88,18 @@ export default function FlashcardSession() {
   const handleAnswer = useCallback(
     async (answer: string, inputMethod: "multiple_choice" | "typed" | "fretboard") => {
       if (!currentCard) return;
+      if (!session) return;
 
       try {
-        const result = await api.submitAnswer(currentCard.id, answer, inputMethod);
+        // GRO-uzk3: session.session_id MUST be threaded through every
+        // submitAnswer call, or the backend returns 404 and, prior to
+        // the fix, would have silently returned zeroed session_progress.
+        const result = await api.submitAnswer(
+          currentCard.id,
+          answer,
+          inputMethod,
+          session.session_id,
+        );
         setProgress(result.session_progress);
         setState({ phase: "feedback", result });
       } catch (err) {
@@ -101,7 +110,7 @@ export default function FlashcardSession() {
         });
       }
     },
-    [currentCard],
+    [currentCard, session],
   );
 
   const handleMultipleChoiceSelect = useCallback(

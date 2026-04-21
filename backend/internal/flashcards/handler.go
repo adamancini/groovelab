@@ -16,26 +16,34 @@ type Handler struct {
 	store *Store
 	ab    *authboss.Authboss
 
-	// guestSessions stores in-memory session state for unauthenticated users.
-	// Key: session_id (UUID), Value: *guestSession.
-	guestMu       sync.Mutex
-	guestSessions map[string]*guestSession
+	// sessions stores in-memory session state keyed by session_id (UUID).
+	// Both guest and authenticated sessions are tracked here so we can (a)
+	// validate session_id on every POST /flashcards/answer call and (b) emit
+	// non-zero session_progress counters. For guests this is also the
+	// authoritative mastery store for the session. For authenticated users
+	// mastery itself is persisted to the database; this map only tracks
+	// progress counters for the lifetime of the session. See GRO-uzk3.
+	sessionsMu sync.Mutex
+	sessions   map[string]*sessionState
 }
 
-// guestSession holds ephemeral state for a guest user's flashcard session.
-type guestSession struct {
+// sessionState holds ephemeral progress state for a flashcard session.
+// masteryMap is populated only for guest sessions; auth sessions leave it
+// empty because mastery is persisted to the database.
+type sessionState struct {
 	cards      []SessionCard
-	masteryMap map[string]*Mastery // card_id -> in-memory mastery
+	masteryMap map[string]*Mastery // card_id -> in-memory mastery (guests only)
 	answered   int
 	correct    int
+	isGuest    bool
 }
 
 // NewHandler creates a Handler backed by the given Store and Authboss instance.
 func NewHandler(store *Store, ab *authboss.Authboss) *Handler {
 	return &Handler{
-		store:         store,
-		ab:            ab,
-		guestSessions: make(map[string]*guestSession),
+		store:    store,
+		ab:       ab,
+		sessions: make(map[string]*sessionState),
 	}
 }
 
@@ -147,16 +155,19 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
 	session := BuildSession(cards, masteryMap)
 	sessionID := uuid.New().String()
 
-	// For guest users, store the session in memory.
-	if userID == "" {
-		gs := &guestSession{
-			cards:      session,
-			masteryMap: make(map[string]*Mastery),
-		}
-		h.guestMu.Lock()
-		h.guestSessions[sessionID] = gs
-		h.guestMu.Unlock()
+	// Store session state in memory for BOTH guest and authenticated users.
+	// For guests this also carries the mastery map; for auth users only the
+	// progress counters are meaningful here (mastery lives in Postgres).
+	// See GRO-uzk3: without this, POST /flashcards/answer cannot validate
+	// session_id for auth users and session_progress silently returns zeros.
+	ss := &sessionState{
+		cards:      session,
+		masteryMap: make(map[string]*Mastery),
+		isGuest:    userID == "",
 	}
+	h.sessionsMu.Lock()
+	h.sessions[sessionID] = ss
+	h.sessionsMu.Unlock()
 
 	resp := SessionResponse{
 		SessionID: sessionID,
@@ -168,9 +179,30 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleAnswer processes an answer submission.
-// POST /api/v1/flashcards/answer
+// POST /api/v1/flashcards/answer?session_id=<uuid>
+//
+// session_id is REQUIRED. A missing or unknown session_id returns 404.
+// This prevents the silent-zero-progress bug (GRO-uzk3) where a frontend
+// that forgot to thread the session_id would see 200 OK with all counters
+// reading zero.
 func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+
+	sessionID := r.URL.Query().Get("session_id")
+	if sessionID == "" {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown session"})
+		return
+	}
+
+	// Validate the session exists in our in-memory map. Lookup under the
+	// mutex to stay consistent with the rest of the session-state API.
+	h.sessionsMu.Lock()
+	_, sessionExists := h.sessions[sessionID]
+	h.sessionsMu.Unlock()
+	if !sessionExists {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "unknown session"})
+		return
+	}
 
 	var req AnswerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -195,7 +227,6 @@ func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := h.currentUserID(r)
-	sessionID := r.URL.Query().Get("session_id")
 
 	var mastery *Mastery
 	isGuest := userID == ""
@@ -230,7 +261,6 @@ func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	if isGuest {
 		// Update in-memory session mastery.
 		h.setGuestMastery(sessionID, req.CardID, mastery)
-		h.updateGuestProgress(sessionID, correct)
 	} else {
 		// Persist attempt and mastery to the database.
 		attempt := &Attempt{
@@ -253,6 +283,11 @@ func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Update session progress counters for both guest and auth sessions.
+	// Unlike mastery (persistent for auth, in-memory for guest), these are
+	// session-scoped — they live only as long as the in-memory sessionState.
+	h.updateSessionProgress(sessionID, correct)
+
 	// Build explanation.
 	explanation := "Incorrect."
 	if correct {
@@ -260,13 +295,11 @@ func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build session progress.
-	progress := h.getSessionProgress(sessionID, isGuest)
+	progress := h.getSessionProgress(sessionID)
 
-	// Populate the next card in the session (if any remain).
-	var nextCard *SessionCard
-	if isGuest && sessionID != "" {
-		nextCard = h.getGuestNextCard(sessionID)
-	}
+	// Populate the next card in the session (if any remain). Both guest and
+	// auth sessions carry a card list, so next_card is available for both.
+	nextCard := h.getSessionNextCard(sessionID)
 
 	resp := AnswerResponse{
 		Correct:         correct,
@@ -281,75 +314,78 @@ func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 
 // getGuestMastery retrieves in-memory mastery for a guest session.
 func (h *Handler) getGuestMastery(sessionID, cardID string) *Mastery {
-	h.guestMu.Lock()
-	defer h.guestMu.Unlock()
-	gs, ok := h.guestSessions[sessionID]
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	ss, ok := h.sessions[sessionID]
 	if !ok {
 		return nil
 	}
-	return gs.masteryMap[cardID]
+	return ss.masteryMap[cardID]
 }
 
 // setGuestMastery stores in-memory mastery for a guest session.
 func (h *Handler) setGuestMastery(sessionID, cardID string, m *Mastery) {
-	h.guestMu.Lock()
-	defer h.guestMu.Unlock()
-	gs, ok := h.guestSessions[sessionID]
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	ss, ok := h.sessions[sessionID]
 	if !ok {
 		return
 	}
-	gs.masteryMap[cardID] = m
+	ss.masteryMap[cardID] = m
 }
 
-// updateGuestProgress increments the answered/correct counters for a guest session.
-func (h *Handler) updateGuestProgress(sessionID string, correct bool) {
-	h.guestMu.Lock()
-	defer h.guestMu.Unlock()
-	gs, ok := h.guestSessions[sessionID]
+// updateSessionProgress increments the answered/correct counters for the
+// session. Applies to both guest and auth sessions. Callers have already
+// validated that the session exists (handleAnswer returns 404 otherwise),
+// but we still no-op on a missing key to stay defensive.
+func (h *Handler) updateSessionProgress(sessionID string, correct bool) {
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	ss, ok := h.sessions[sessionID]
 	if !ok {
 		return
 	}
-	gs.answered++
+	ss.answered++
 	if correct {
-		gs.correct++
+		ss.correct++
 	}
 }
 
-// getGuestNextCard returns the next unanswered card in a guest session,
+// getSessionNextCard returns the next unanswered card in a session,
 // or nil if all cards have been answered. Must be called after
-// updateGuestProgress has incremented the answered counter.
-func (h *Handler) getGuestNextCard(sessionID string) *SessionCard {
-	h.guestMu.Lock()
-	defer h.guestMu.Unlock()
-	gs, ok := h.guestSessions[sessionID]
+// updateSessionProgress has incremented the answered counter.
+func (h *Handler) getSessionNextCard(sessionID string) *SessionCard {
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	ss, ok := h.sessions[sessionID]
 	if !ok {
 		return nil
 	}
-	if gs.answered >= len(gs.cards) {
+	if ss.answered >= len(ss.cards) {
 		return nil
 	}
-	next := gs.cards[gs.answered]
+	next := ss.cards[ss.answered]
 	return &next
 }
 
-// getSessionProgress returns progress counters for the session.
-func (h *Handler) getSessionProgress(sessionID string, isGuest bool) SessionProgress {
-	if isGuest && sessionID != "" {
-		h.guestMu.Lock()
-		defer h.guestMu.Unlock()
-		gs, ok := h.guestSessions[sessionID]
-		if ok {
-			return SessionProgress{
-				Answered:  gs.answered,
-				Total:     len(gs.cards),
-				Correct:   gs.correct,
-				Incorrect: gs.answered - gs.correct,
-			}
-		}
+// getSessionProgress returns progress counters for the session. Applies to
+// both guest and auth sessions: the in-memory sessionState is the source of
+// truth for counters regardless of authentication. Callers have already
+// validated that the session exists; we still return a zero struct for a
+// missing session to stay defensive.
+func (h *Handler) getSessionProgress(sessionID string) SessionProgress {
+	h.sessionsMu.Lock()
+	defer h.sessionsMu.Unlock()
+	ss, ok := h.sessions[sessionID]
+	if !ok {
+		return SessionProgress{}
 	}
-	// For authenticated users or missing sessions, return empty progress.
-	// Session progress tracking for auth users would require session storage.
-	return SessionProgress{}
+	return SessionProgress{
+		Answered:  ss.answered,
+		Total:     len(ss.cards),
+		Correct:   ss.correct,
+		Incorrect: ss.answered - ss.correct,
+	}
 }
 
 // writeJSON is a helper that encodes v as JSON and writes it to the response.

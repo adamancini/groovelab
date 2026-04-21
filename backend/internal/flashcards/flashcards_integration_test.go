@@ -570,13 +570,15 @@ func TestAnswer_AuthenticatedPersistsMastery(t *testing.T) {
 	firstCard := session.Cards[0]
 
 	// Submit 3 correct answers to test stage advancement.
+	// session_id is required on POST /flashcards/answer (GRO-uzk3).
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
 	for i := 0; i < 3; i++ {
 		answerReq := map[string]interface{}{
 			"card_id":      firstCard.ID,
 			"answer":       json.RawMessage(firstCard.CorrectAnswer),
 			"input_method": "multiple_choice",
 		}
-		answerResp := postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", answerReq)
+		answerResp := postJSON(t, client, answerURL, answerReq)
 		answerResp.Body.Close()
 		assert.Equal(t, http.StatusOK, answerResp.StatusCode)
 	}
@@ -631,6 +633,15 @@ func TestAnswer_StageRegressesAfterConsecutiveWrong(t *testing.T) {
 	}
 	require.NoError(t, env.store.UpsertMastery(ctx, m))
 
+	// Start a session so we have a valid session_id to submit against
+	// (GRO-uzk3: POST /flashcards/answer now requires session_id).
+	sessResp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	sessBody := readBody(t, sessResp)
+	require.Equal(t, http.StatusOK, sessResp.StatusCode)
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(sessBody, &session))
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+
 	// Submit 2 wrong answers.
 	for i := 0; i < 2; i++ {
 		answerReq := map[string]interface{}{
@@ -638,7 +649,7 @@ func TestAnswer_StageRegressesAfterConsecutiveWrong(t *testing.T) {
 			"answer":       json.RawMessage(`{"name":"wrong"}`),
 			"input_method": "multiple_choice",
 		}
-		answerResp := postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", answerReq)
+		answerResp := postJSON(t, client, answerURL, answerReq)
 		answerResp.Body.Close()
 		assert.Equal(t, http.StatusOK, answerResp.StatusCode)
 	}
@@ -656,26 +667,144 @@ func TestAnswer_MissingFieldsReturn400(t *testing.T) {
 	env := setupTestEnv(t)
 	client := newClientWithCookies(t)
 
+	// Start a session so the session_id-required check (GRO-uzk3) passes
+	// and we reach the body validation.
+	sessResp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	sessBody := readBody(t, sessResp)
+	require.Equal(t, http.StatusOK, sessResp.StatusCode)
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(sessBody, &session))
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+
 	// Missing card_id.
 	answerReq := map[string]interface{}{
 		"answer":       json.RawMessage(`{"name":"test"}`),
 		"input_method": "multiple_choice",
 	}
-	resp := postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", answerReq)
+	resp := postJSON(t, client, answerURL, answerReq)
 	assert.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	resp.Body.Close()
+}
+
+// TestAnswer_ThreeCorrectAnswersReportProgress covers the primary GRO-uzk3
+// regression: after 3 correct answers in one session, the response's
+// session_progress must report answered=3, correct=3, incorrect=0, and a
+// non-zero total. Before the fix, every call returned {0,0,0,0} because
+// the frontend did not thread session_id and the backend silently fell
+// through to a zero-valued SessionProgress struct.
+func TestAnswer_ThreeCorrectAnswersReportProgress(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Start a guest session.
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(body, &session))
+	require.GreaterOrEqual(t, len(session.Cards), 3, "need at least 3 cards")
+
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+
+	var lastResult flashcards.AnswerResponse
+	for i := 0; i < 3; i++ {
+		card := session.Cards[i]
+		req := map[string]interface{}{
+			"card_id":      card.ID,
+			"answer":       json.RawMessage(card.CorrectAnswer),
+			"input_method": "multiple_choice",
+		}
+		answerResp := postJSON(t, client, answerURL, req)
+		answerBody := readBody(t, answerResp)
+		require.Equal(t, http.StatusOK, answerResp.StatusCode, "body=%s", string(answerBody))
+		require.NoError(t, json.Unmarshal(answerBody, &lastResult))
+		assert.True(t, lastResult.Correct, "card %d should be correct", i)
+	}
+
+	// After 3 correct answers, the last response must reflect 3/3 progress.
+	assert.Equal(t, 3, lastResult.SessionProgress.Answered,
+		"answered counter should be 3 after 3 answers")
+	assert.Equal(t, 3, lastResult.SessionProgress.Correct,
+		"correct counter should be 3 after 3 correct answers")
+	assert.Equal(t, 0, lastResult.SessionProgress.Incorrect,
+		"incorrect counter should be 0 after 3 correct answers")
+	assert.Equal(t, len(session.Cards), lastResult.SessionProgress.Total,
+		"total should equal the number of cards in the session")
+}
+
+// TestAnswer_MissingSessionIDReturns404 verifies GRO-uzk3 AC 5: a POST
+// with no session_id query parameter must NOT return 200 with zero
+// progress; it must return 404. This makes the silent-zero failure mode
+// impossible by construction.
+func TestAnswer_MissingSessionIDReturns404(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Start a session so we have a valid card_id to reference.
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(body, &session))
+	require.Greater(t, len(session.Cards), 0)
+
+	// Deliberately omit session_id.
+	answerReq := map[string]interface{}{
+		"card_id":      session.Cards[0].ID,
+		"answer":       json.RawMessage(session.Cards[0].CorrectAnswer),
+		"input_method": "multiple_choice",
+	}
+	answerResp := postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", answerReq)
+	defer answerResp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, answerResp.StatusCode,
+		"missing session_id must return 404, not 200 with zeroed progress")
+}
+
+// TestAnswer_UnknownSessionIDReturns404 verifies GRO-uzk3 AC 6: a POST
+// carrying a well-formed but unknown session_id must return 404.
+func TestAnswer_UnknownSessionIDReturns404(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Start a real session to get a real card_id.
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(body, &session))
+
+	// Use an arbitrary UUID that was never issued as a session.
+	bogusURL := env.server.URL + "/api/v1/flashcards/answer?session_id=00000000-0000-0000-0000-000000000000"
+	answerReq := map[string]interface{}{
+		"card_id":      session.Cards[0].ID,
+		"answer":       json.RawMessage(session.Cards[0].CorrectAnswer),
+		"input_method": "multiple_choice",
+	}
+	answerResp := postJSON(t, client, bogusURL, answerReq)
+	defer answerResp.Body.Close()
+	assert.Equal(t, http.StatusNotFound, answerResp.StatusCode,
+		"unknown session_id must return 404")
 }
 
 func TestAnswer_NonExistentCardReturns404(t *testing.T) {
 	env := setupTestEnv(t)
 	client := newClientWithCookies(t)
 
+	// Start a session first (GRO-uzk3: session_id required on answer).
+	sessResp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	sessBody := readBody(t, sessResp)
+	require.Equal(t, http.StatusOK, sessResp.StatusCode)
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(sessBody, &session))
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+
 	answerReq := map[string]interface{}{
 		"card_id":      "00000000-0000-0000-0000-000000000000",
 		"answer":       json.RawMessage(`{"name":"test"}`),
 		"input_method": "multiple_choice",
 	}
-	resp := postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", answerReq)
+	resp := postJSON(t, client, answerURL, answerReq)
 	assert.Equal(t, http.StatusNotFound, resp.StatusCode)
 	resp.Body.Close()
 }
@@ -1062,7 +1191,8 @@ func TestCheckAnswer_IntervalsField(t *testing.T) {
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	var session struct {
-		Cards []struct {
+		SessionID string `json:"session_id"`
+		Cards     []struct {
 			ID            string          `json:"id"`
 			CorrectAnswer json.RawMessage `json:"correct_answer"`
 			Distractors   json.RawMessage `json:"distractors"`
@@ -1070,11 +1200,14 @@ func TestCheckAnswer_IntervalsField(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(body, &session))
 	require.NotEmpty(t, session.Cards)
+	require.NotEmpty(t, session.SessionID, "session must carry an id")
 	card := session.Cards[0]
 
 	var correct map[string]interface{}
 	require.NoError(t, json.Unmarshal(card.CorrectAnswer, &correct))
 	intervals := correct["intervals"].(string)
+
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
 
 	// Submit the correct interval string — expect correct=true.
 	submitBody := map[string]interface{}{
@@ -1082,7 +1215,7 @@ func TestCheckAnswer_IntervalsField(t *testing.T) {
 		"answer":       map[string]string{"intervals": intervals},
 		"input_method": "multiple_choice",
 	}
-	resp = postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", submitBody)
+	resp = postJSON(t, client, answerURL, submitBody)
 	body = readBody(t, resp)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(body))
 	var ans struct {
@@ -1093,7 +1226,7 @@ func TestCheckAnswer_IntervalsField(t *testing.T) {
 
 	// Submit a bogus interval string — expect correct=false.
 	submitBody["answer"] = map[string]string{"intervals": "9-9-9-9"}
-	resp = postJSON(t, client, env.server.URL+"/api/v1/flashcards/answer", submitBody)
+	resp = postJSON(t, client, answerURL, submitBody)
 	body = readBody(t, resp)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(body))
 	require.NoError(t, json.Unmarshal(body, &ans))

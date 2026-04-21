@@ -307,6 +307,14 @@ export async function fetchSession(topic: string): Promise<FlashcardSession> {
 }
 
 /** POST /api/v1/flashcards/answer -- submit an answer.
+ *
+ *  session_id MUST be passed (threaded from the FlashcardSession returned
+ *  by fetchSession). Without it the backend returns 404 -- before GRO-uzk3
+ *  was fixed the backend silently returned 200 with zeroed progress, which
+ *  broke the Session Complete screen (HAR captured 2026-04-21 showed
+ *  3/3 correct answers rendering as "Accuracy 0%" because the frontend
+ *  never carried the session_id through).
+ *
  *  answerJson: the JSON-serialised answer payload built by the caller from
  *  Flashcard._optionAnswers (MC) or Flashcard._answerKey (typed/fretboard).
  */
@@ -314,15 +322,19 @@ export async function submitAnswer(
   cardId: string,
   answerJson: string,
   inputMethod: "multiple_choice" | "typed" | "fretboard",
+  sessionId: string,
 ): Promise<AnswerResult> {
-  const raw = await apiRequest<RawAnswerResponse>("/flashcards/answer", {
-    method: "POST",
-    body: JSON.stringify({
-      card_id: cardId,
-      answer: JSON.parse(answerJson),
-      input_method: inputMethod,
-    }),
-  });
+  const raw = await apiRequest<RawAnswerResponse>(
+    `/flashcards/answer?session_id=${encodeURIComponent(sessionId)}`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        card_id: cardId,
+        answer: JSON.parse(answerJson),
+        input_method: inputMethod,
+      }),
+    },
+  );
   return transformAnswerResponse(raw);
 }
 
