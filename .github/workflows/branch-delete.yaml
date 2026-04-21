@@ -1,0 +1,58 @@
+name: Branch Delete
+
+# When a branch is deleted (locally or via PR merge with "delete branch"),
+# archive the matching Replicated channel so we don't accumulate stale
+# channels in the Vendor Portal. Main is protected — never archive.
+
+on:
+  delete
+
+permissions:
+  contents: read
+
+jobs:
+  archive-channel:
+    name: Archive channel
+    # Only fire for branch deletions, never tags, and never for main.
+    if: github.event.ref_type == 'branch' && github.event.ref != 'main'
+    runs-on: ubuntu-latest
+    env:
+      REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
+      APP_SLUG: groovelab
+    steps:
+      - name: Compute channel slug from deleted branch
+        id: meta
+        env:
+          DELETED_REF: ${{ github.event.ref }}
+        run: |
+          # Same sanitization as branch-push.yaml — keep the two workflows
+          # in lockstep so delete finds what push created.
+          CHANNEL=$(echo "$DELETED_REF" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
+          CHANNEL="${CHANNEL:0:60}"
+          echo "channel=${CHANNEL}" >> "$GITHUB_OUTPUT"
+          echo "Looking for channel: ${CHANNEL}"
+
+      - name: Install Replicated CLI
+        run: |
+          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
+            | grep "browser_download_url.*linux_amd64.tar.gz" \
+            | cut -d '"' -f 4 \
+            | xargs curl -sL \
+            | tar xz -C /usr/local/bin replicated
+
+      - name: Archive channel if it exists
+        env:
+          CHANNEL: ${{ steps.meta.outputs.channel }}
+        run: |
+          EXISTING=$(replicated channel ls \
+            --app "$APP_SLUG" --output json \
+            | jq -r --arg n "$CHANNEL" '.[] | select(.name == $n) | .id')
+          if [ -z "$EXISTING" ]; then
+            echo "::notice::No channel named '$CHANNEL' — nothing to archive."
+            exit 0
+          fi
+          echo "Archiving channel $CHANNEL (id=$EXISTING)"
+          replicated channel rm "$EXISTING" --app "$APP_SLUG"
+          echo "::notice::Archived channel $CHANNEL"

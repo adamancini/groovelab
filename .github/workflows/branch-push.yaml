@@ -1,0 +1,204 @@
+name: Branch Push
+
+# Triggered on every push to a branch in this repo (not forks, not tags).
+# Produces images tagged with the commit SHA, signs them, and creates a
+# Replicated release on a channel matched to the branch:
+#
+#   main                   -> Unstable channel (continuous "dirty" release line)
+#   any other branch       -> channel named after the sanitized branch
+#   renovate/*, dependabot/*  -> skipped (they drive PRs; validated via pr.yaml)
+#
+# No CMX validation runs here on purpose — install/upgrade smoke tests live
+# in pr.yaml, which fires on the matching pull request. Branch channels are
+# meant for iterative development and QA; they persist until the branch is
+# deleted (see branch-delete.yaml for cleanup).
+
+on:
+  push:
+    branches:
+      - main
+      - "**"
+      - "!renovate/**"
+      - "!dependabot/**"
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write # Cosign keyless via GitHub OIDC
+
+concurrency:
+  # Cancel any in-flight run on the same branch — we only care about the
+  # tip of a branch. A force-push cleans up orphaned runs.
+  group: branch-push-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GHCR_PREFIX: ghcr.io/adamancini
+  APP_SLUG: groovelab
+
+jobs:
+  meta:
+    name: Compute channel and version
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.compute.outputs.channel }}
+      version: ${{ steps.compute.outputs.version }}
+      image-tag: ${{ steps.compute.outputs.image_tag }}
+    steps:
+      - name: Compute channel + version
+        id: compute
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          SHA7="${SHA:0:7}"
+
+          if [ "$REF_NAME" = "main" ]; then
+            CHANNEL="Unstable"
+            VERSION="main-${SHA7}"
+            IMAGE_TAG="main-${SHA7}"
+          else
+            # Sanitize: lowercase, non-alphanum becomes hyphen, trim edges, cap 60.
+            CHANNEL=$(echo "$REF_NAME" \
+              | tr '[:upper:]' '[:lower:]' \
+              | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//')
+            CHANNEL="${CHANNEL:0:60}"
+            VERSION="${CHANNEL}-${SHA7}"
+            IMAGE_TAG="${CHANNEL}-${SHA7}"
+          fi
+
+          echo "channel=${CHANNEL}"     >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"     >> "$GITHUB_OUTPUT"
+          echo "image_tag=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "::notice::channel=${CHANNEL} version=${VERSION}"
+
+  build-sign:
+    name: Build, Push, Sign
+    runs-on: ubuntu-latest
+    needs: meta
+    outputs:
+      frontend-digest: ${{ steps.build-frontend.outputs.digest }}
+      backend-digest: ${{ steps.build-backend.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push frontend
+        id: build-frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend/
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ needs.meta.outputs.image-tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push backend
+        id: build-backend
+        uses: docker/build-push-action@v6
+        with:
+          context: backend/
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ needs.meta.outputs.image-tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign frontend image
+        env:
+          IMAGE_REF: ${{ env.GHCR_PREFIX }}/groovelab-frontend@${{ steps.build-frontend.outputs.digest }}
+        run: cosign sign --yes "$IMAGE_REF"
+
+      - name: Sign backend image
+        env:
+          IMAGE_REF: ${{ env.GHCR_PREFIX }}/groovelab-backend@${{ steps.build-backend.outputs.digest }}
+        run: cosign sign --yes "$IMAGE_REF"
+
+  release:
+    name: Release to channel
+    runs-on: ubuntu-latest
+    needs: [meta, build-sign]
+    env:
+      REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
+      CHANNEL: ${{ needs.meta.outputs.channel }}
+      VERSION: ${{ needs.meta.outputs.version }}
+      IMAGE_TAG: ${{ needs.meta.outputs.image-tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "4.1.4"
+
+      - name: Install Replicated CLI
+        run: |
+          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
+            | grep "browser_download_url.*linux_amd64.tar.gz" \
+            | cut -d '"' -f 4 \
+            | xargs curl -sL \
+            | tar xz -C /usr/local/bin replicated
+
+      - name: Install yq
+        run: |
+          sudo curl -sL -o /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Ensure channel exists (non-main only)
+        if: env.CHANNEL != 'Unstable'
+        run: |
+          EXISTING=$(replicated channel ls \
+            --app "$APP_SLUG" --output json \
+            | jq -r --arg n "$CHANNEL" '.[] | select(.name == $n) | .id')
+          if [ -n "$EXISTING" ]; then
+            echo "Channel $CHANNEL already exists (id=$EXISTING)"
+          else
+            echo "Creating channel $CHANNEL"
+            replicated channel create \
+              --name "$CHANNEL" \
+              --app "$APP_SLUG"
+          fi
+
+      - name: Patch chart image tags to match build
+        # The chart's values.yaml carries hardcoded image tags. Rewrite them
+        # to the freshly-built tag so the release packaged below references
+        # images that actually exist.
+        run: |
+          yq -i ".image.frontend.tag = \"$IMAGE_TAG\"" chart/values.yaml
+          yq -i ".image.backend.tag = \"$IMAGE_TAG\"" chart/values.yaml
+          echo "Patched image tags:"
+          yq '.image' chart/values.yaml
+
+      - name: Package chart dependencies
+        run: |
+          helm dependency update chart/
+          # Helm v4 requires extracted subchart directories alongside .tgz files.
+          cd chart/charts && for f in *.tgz; do
+            [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true
+          done
+
+      - name: Create release on channel
+        run: |
+          replicated release create \
+            --yaml-dir chart/ \
+            --promote "$CHANNEL" \
+            --version "$VERSION" \
+            --app "$APP_SLUG"
+          echo "::notice::Released $VERSION to channel $CHANNEL"
+          echo "::notice::Images: $GHCR_PREFIX/groovelab-{frontend,backend}:$IMAGE_TAG"
