@@ -52,6 +52,7 @@ distribution workflow, not to sprint ahead of verification.
 - **nd issues**: use `nd` CLI commands, never edit `.vault/issues/*.md` directly — a PreToolUse hook will block you.
 - **E2e observability**: timestamped step lines, short per-step timeouts, kubectl polling (not `helm install --wait` alone).
 - **Friction log proactively**: whenever Replicated/Helm/CMX surprises you or a mis-assumption bites, append to `FRICTION_LOG.md` via the `friction-log` skill.
+- **Chart image tags**: never hardcode commit SHAs in `chart/values.yaml`. Leave `image.<side>.tag` empty so `.Chart.AppVersion` is the source of truth; CI rewrites `chart/Chart.yaml` from the git tag before `replicated release create`. See `chart/README.md` for the invariant.
 
 ## Useful References
 
