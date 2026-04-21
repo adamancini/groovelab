@@ -195,6 +195,13 @@ export interface FlashcardSession {
 const BASE = "/api/v1/auth";
 const API_BASE = "/api/v1";
 
+/**
+ * Authboss in API mode returns 307 (with a JSON body and no HTTP Location
+ * header) on successful /login, /register, and /logout. Because the
+ * redirect target is carried in the body, the browser's fetch cannot
+ * auto-follow. Treat such 3xx responses with a JSON body as success, not
+ * as an error. 4xx/5xx still throw ApiError. See GRO-xrs2.
+ */
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -205,12 +212,18 @@ async function request<T>(
     ...options,
   });
 
-  if (!res.ok) {
+  // 2xx: standard success. 3xx (specifically 302/303/307 from Authboss):
+  // success-with-body. Everything else is an error.
+  const isAuthbossRedirect =
+    res.status === 302 || res.status === 303 || res.status === 307;
+  if (!res.ok && !isAuthbossRedirect) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new ApiError(res.status, (body as AuthError).error ?? res.statusText);
   }
 
-  return res.json() as Promise<T>;
+  // Parse the body if there is one; empty bodies (e.g. 204, or a 3xx with
+  // no payload) resolve to an empty object cast to T.
+  return (await res.json().catch(() => ({}))) as T;
 }
 
 async function apiRequest<T>(
@@ -241,25 +254,32 @@ export class ApiError extends Error {
   }
 }
 
-/** POST /api/v1/auth/login */
+/** POST /api/v1/auth/login
+ *
+ * redirect: "manual" prevents the browser from attempting to auto-follow
+ * Authboss's 307 response. Authboss carries the redirect target in the
+ * JSON body, not the Location header, so an auto-follow would fail.
+ */
 export function login(email: string, password: string): Promise<void> {
   return request("/login", {
     method: "POST",
+    redirect: "manual",
     body: JSON.stringify({ email, password }),
   });
 }
 
-/** POST /api/v1/auth/register */
+/** POST /api/v1/auth/register -- see login() for redirect: "manual" rationale. */
 export function register(email: string, password: string): Promise<void> {
   return request("/register", {
     method: "POST",
+    redirect: "manual",
     body: JSON.stringify({ email, password }),
   });
 }
 
-/** POST /api/v1/auth/logout */
+/** POST /api/v1/auth/logout -- see login() for redirect: "manual" rationale. */
 export function logout(): Promise<void> {
-  return request("/logout", { method: "POST" });
+  return request("/logout", { method: "POST", redirect: "manual" });
 }
 
 /** GET /api/v1/auth/me -- returns current user or throws 401 */
