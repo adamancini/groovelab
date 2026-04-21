@@ -14,6 +14,14 @@ export default function UpdateBanner() {
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
+    // Only query the Replicated SDK for authenticated users. On pre-auth
+    // routes (/auth/register, /auth/signin) the endpoint has no reason to be
+    // called, and its 503-on-cold-cache response shows up as a console error
+    // that misleads debugging.
+    if (!user) {
+      return;
+    }
+
     // Check if already dismissed this session.
     if (sessionStorage.getItem(DISMISS_KEY) === "true") {
       setDismissed(true);
@@ -39,7 +47,7 @@ export default function UpdateBanner() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user]);
 
   const handleDismiss = () => {
     sessionStorage.setItem(DISMISS_KEY, "true");
