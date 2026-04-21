@@ -114,6 +114,45 @@ describe("Sign-in page", () => {
     // Should redirect to home and show authenticated view.
     await screen.findByText("Welcome back, test");
   });
+
+  // Regression for GRO-xrs2: Authboss returns 307 + JSON body on successful
+  // login (no HTTP Location header). The frontend must treat this as success
+  // and navigate away from /auth/login, not silently fail.
+  it("redirects to home after 307-with-JSON login (Authboss success shape)", async () => {
+    render(<App />);
+    await screen.findByText("Welcome to Groovelab");
+
+    const signInLinks = screen.getAllByText("Sign in");
+    fireEvent.click(signInLinks[0]);
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "test@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("********"), {
+      target: { value: "password123" },
+    });
+
+    // Authboss success: 307 with res.ok === false but a JSON success body.
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 307,
+        json: () =>
+          Promise.resolve({ status: "success", location: "/" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({ id: "1", email: "test@example.com", role: "user" }),
+      });
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
+
+    // Should navigate to home and render authenticated view -- this is
+    // exactly what was broken before GRO-xrs2's fix.
+    await screen.findByText("Welcome back, test");
+  });
 });
 
 describe("Register page", () => {
@@ -153,6 +192,46 @@ describe("Register page", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create account" }));
 
     expect(screen.getByText("Passwords do not match")).toBeInTheDocument();
+  });
+
+  // Regression for GRO-xrs2: Authboss returns 307 + JSON body on successful
+  // register. The Register page must navigate to "/" afterwards.
+  it("redirects to home after 307-with-JSON register (Authboss success shape)", async () => {
+    render(<App />);
+    await screen.findByText("Welcome to Groovelab");
+
+    const signInLinks = screen.getAllByText("Sign in");
+    fireEvent.click(signInLinks[0]);
+    fireEvent.click(screen.getByText("Create one"));
+
+    fireEvent.change(screen.getByPlaceholderText("you@example.com"), {
+      target: { value: "new@example.com" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Min 8 characters"), {
+      target: { value: "password123" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Repeat password"), {
+      target: { value: "password123" },
+    });
+
+    // Authboss success: 307 with res.ok === false + JSON success body.
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 307,
+        json: () =>
+          Promise.resolve({ status: "success", location: "/" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({ id: "2", email: "new@example.com", role: "user" }),
+      });
+
+    fireEvent.click(screen.getByRole("button", { name: "Create account" }));
+
+    await screen.findByText("Welcome back, new");
   });
 
   it("shows error when password is too short", async () => {
