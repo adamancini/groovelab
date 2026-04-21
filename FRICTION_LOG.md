@@ -307,3 +307,11 @@ The CLI (`replicated customer update --kots-install=false --channel ... --email 
 **Actual:** The command returned `Error: the action is not allowed for the current user or team` on both a k3s (container-based) and an rke2 (VM-based, r1.medium) cluster. The error message gives no indication of what permission is missing, which plan tier enables it, or how to request access. Recreating the cluster on rke2 specifically to satisfy the "VM-based distributions only" requirement in the docs did not help — the error is account-level, not distribution-level.
 **Resolution:** Fell back to `cloudflared tunnel --url http://localhost:8080` as a workaround (free tier, no account needed). The tunnel works but is not a first-class Replicated experience. Resolution time: ~20 minutes including cluster recreation.
 **Severity:** blocker
+
+## Entry 29 — 2026-04-21 — annoyance
+
+**Trying to:** Run `task image:build-push` to rebuild `groovelab-backend` for linux/amd64 from an Apple Silicon dev host (colima Docker runtime, buildx) as part of pre-UAT image refresh.
+**Expected:** buildx would build the Go binary under QEMU emulation and push the amd64 image to GHCR, the same way the frontend build did a few seconds earlier.
+**Actual:** The Go 1.25 compiler segfaulted inside QEMU partway through the `github.com/jackc/pgx/v5/pgconn/ctxwatch` package: `/usr/local/go/pkg/tool/linux_amd64/compile: signal: segmentation fault (core dumped)`. The whole `image:build-push` task failed after ~90s. Nothing in the Dockerfile or task docs hinted this would happen — the Dockerfile just did `RUN CGO_ENABLED=0 GOOS=linux go build ...` with no platform pin, so buildx emulated the entire compile under QEMU.
+**Resolution:** Pinned the build stage to `FROM --platform=$BUILDPLATFORM golang:1.25-alpine AS build` and switched to `GOOS=${TARGETOS} GOARCH=${TARGETARCH}` in the build command. Go's native cross-compiler runs on arm64 and emits an amd64 binary without QEMU in the loop. The final stage still targets amd64. Fix + re-run took ~10 minutes.
+**Severity:** annoyance
