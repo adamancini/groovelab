@@ -33,10 +33,17 @@ export interface Flashcard {
   options?: string[];
   /** Fretboard positions for stage 3 display. */
   fretboard_positions?: FretboardPosition[];
-  /** Which answer field to submit ("notes" | "name"). Derived from card direction. */
+  /** Which answer field to submit ("notes" | "name" | "intervals"). Derived from card direction. */
   _answerKey: string;
   /** Maps each display option string to the JSON answer payload to POST. */
   _optionAnswers: Record<string, string>;
+  /**
+   * Space-separated chord notes (e.g. "G B Eb"), used by the audio player.
+   * Null for type_to_intervals cards, which are key-agnostic.
+   */
+  chordNotes: string | null;
+  /** Card direction ("name_to_notes" | "notes_to_name" | "type_to_intervals"). */
+  direction: string;
 }
 
 // --------------- Raw backend wire types (not exported) ---------------
@@ -111,6 +118,13 @@ function transformSessionCard(raw: RawSessionCard): Flashcard {
   const shuffled = shuffle(labels);
   const stage = Math.min(Math.max(raw.stage, 0), 3) as 0 | 1 | 2 | 3;
 
+  // Chord notes for audio playback. type_to_intervals cards are key-agnostic
+  // and intentionally produce no audio.
+  const chordNotes =
+    raw.direction === "type_to_intervals"
+      ? null
+      : ((raw.correct_answer.notes as string | undefined) ?? null);
+
   return {
     id: raw.id,
     question: questionText,
@@ -118,6 +132,8 @@ function transformSessionCard(raw: RawSessionCard): Flashcard {
     options: stage <= 1 ? shuffled : undefined,
     _answerKey: answerKey,
     _optionAnswers: optionAnswers,
+    chordNotes,
+    direction: raw.direction,
   };
 }
 

@@ -8,7 +8,7 @@
  * 4. Show session summary at completion
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { useAuth } from "../context/AuthContext";
 import * as api from "../lib/api";
@@ -17,6 +17,7 @@ import TypedAnswer from "../components/flashcards/TypedAnswer";
 import FretboardTap from "../components/flashcards/FretboardTap";
 import AnswerFeedback from "../components/flashcards/AnswerFeedback";
 import type { FretboardPosition } from "../lib/api";
+import { useChordPlayer } from "../hooks/useChordPlayer";
 
 type SessionState =
   | { phase: "loading" }
@@ -41,6 +42,16 @@ export default function FlashcardSession() {
     review_cards: 0,
   });
   const [cardIndex, setCardIndex] = useState(0);
+
+  // Audio controls for chord playback (GRO-oa1z).
+  const [isMuted, setIsMuted] = useState(false);
+  const [volume, setVolume] = useState(100);
+  const { playChord, setVolume: setPlayerVolume, stopPlayback } = useChordPlayer();
+  // Ref-cached mute flag so the auto-play effect can read the current
+  // value without re-firing when isMuted toggles. We want auto-play to
+  // only fire when a NEW card enters the answering phase, not on every
+  // mute/unmute click.
+  const mutedRef = useRef(false);
 
   // Fetch session on mount.
   useEffect(() => {
@@ -157,6 +168,37 @@ export default function FlashcardSession() {
       setState({ phase: "summary" });
     }
   }, [state, session, cardIndex]);
+
+  // Auto-play chord audio when a new card enters the answering phase.
+  // Muted cards, feedback phase, and type_to_intervals cards (null chordNotes)
+  // are intentional no-ops. isMuted is read from a ref so toggling mute
+  // does not cause the current card to replay.
+  useEffect(() => {
+    mutedRef.current = isMuted;
+  }, [isMuted]);
+
+  useEffect(() => {
+    if (mutedRef.current) return;
+    if (state.phase !== "answering") return;
+    if (!currentCard?.chordNotes) return;
+    playChord(currentCard.chordNotes);
+  }, [currentCard, state.phase, playChord]);
+
+  // Forward volume changes into the sampler.
+  useEffect(() => {
+    setPlayerVolume(volume);
+  }, [volume, setPlayerVolume]);
+
+  // Stop any in-flight playback the instant the user mutes.
+  useEffect(() => {
+    if (isMuted) stopPlayback();
+  }, [isMuted, stopPlayback]);
+
+  const handleReplay = useCallback(() => {
+    if (isMuted) return;
+    if (!currentCard?.chordNotes) return;
+    playChord(currentCard.chordNotes);
+  }, [currentCard, isMuted, playChord]);
 
   const topicName = topic
     ? decodeURIComponent(topic).replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
@@ -279,22 +321,44 @@ export default function FlashcardSession() {
   // --- Answering / Feedback ---
   return (
     <div className="mx-auto max-w-2xl px-4 py-8">
-      {/* Breadcrumb */}
-      <nav
-        aria-label="Breadcrumb"
-        className="mb-6"
-        data-testid="breadcrumb"
-      >
-        <ol className="flex items-center gap-2 text-sm text-text-secondary">
-          <li>
-            <Link to="/learn" className="hover:text-accent-primary transition-colors">
-              Learn
-            </Link>
-          </li>
-          <li aria-hidden="true">&gt;</li>
-          <li className="text-text-primary font-medium">{topicName}</li>
-        </ol>
-      </nav>
+      {/* Breadcrumb + audio controls */}
+      <div className="mb-6 flex items-center justify-between gap-4">
+        <nav aria-label="Breadcrumb" data-testid="breadcrumb">
+          <ol className="flex items-center gap-2 text-sm text-text-secondary">
+            <li>
+              <Link to="/learn" className="hover:text-accent-primary transition-colors">
+                Learn
+              </Link>
+            </li>
+            <li aria-hidden="true">&gt;</li>
+            <li className="text-text-primary font-medium">{topicName}</li>
+          </ol>
+        </nav>
+        <div className="flex items-center gap-2" data-testid="audio-controls">
+          <button
+            type="button"
+            onClick={() => setIsMuted((m) => !m)}
+            aria-label={isMuted ? "Unmute chord audio" : "Mute chord audio"}
+            aria-pressed={isMuted}
+            className="rounded border border-white/10 bg-elevated px-2 py-1 text-sm text-text-primary hover:bg-elevated/80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+            data-testid="mute-toggle"
+          >
+            {isMuted ? "🔇" : "🔊"}
+          </button>
+          {!isMuted && (
+            <input
+              type="range"
+              min={0}
+              max={100}
+              value={volume}
+              onChange={(e) => setVolume(Number(e.target.value))}
+              aria-label="Chord playback volume"
+              className="w-24"
+              data-testid="volume-slider"
+            />
+          )}
+        </div>
+      </div>
 
       {/* Progress bar */}
       <div className="mb-6 flex items-center justify-between" data-testid="session-progress">
@@ -327,6 +391,22 @@ export default function FlashcardSession() {
           >
             {currentCard.question}
           </h2>
+
+          {/* Replay chord audio (hidden when no audio applies — e.g. type_to_intervals) */}
+          {state.phase === "answering" && currentCard.chordNotes && (
+            <div className="mb-4 text-center">
+              <button
+                type="button"
+                onClick={handleReplay}
+                disabled={isMuted}
+                aria-label="Replay chord"
+                className="rounded border border-white/10 bg-elevated px-3 py-1 text-sm text-text-secondary hover:text-accent-primary disabled:opacity-50 disabled:cursor-not-allowed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-primary"
+                data-testid="replay-button"
+              >
+                ♪ Replay chord
+              </button>
+            </div>
+          )}
 
           {/* Input area -- varies by stage */}
           {state.phase === "answering" && (
