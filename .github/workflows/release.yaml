@@ -113,6 +113,22 @@ jobs:
             | xargs curl -sL \
             | tar xz -C /usr/local/bin replicated
 
+      - name: Sync Chart.yaml version to tag
+        # Rewrites chart/Chart.yaml so `version` matches the tag without its
+        # leading `v` (Helm SemVer requirement) and `appVersion` matches the
+        # raw tag (which is also the GHCR image tag). Templates fall back to
+        # .Chart.AppVersion when image.<side>.tag is empty, so this single
+        # rewrite wires the entire chart to the just-built images.
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          CHART_VERSION="${VERSION#v}"           # e.g. 0.1.0 (Helm SemVer)
+          APP_VERSION="${VERSION}"               # e.g. v0.1.0 (matches GHCR image tag)
+          yq -i ".version = \"${CHART_VERSION}\"" chart/Chart.yaml
+          yq -i ".appVersion = \"${APP_VERSION}\"" chart/Chart.yaml
+          echo "Chart.yaml synced:"
+          grep -E "^(version|appVersion):" chart/Chart.yaml
+
       - name: Package and create release on Unstable
         id: release
         run: |
@@ -225,12 +241,16 @@ jobs:
           NAMESPACE=groovelab
           cd chart/charts && for f in *.tgz; do [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true; done && cd ../..
 
+          # NOTE: image tags intentionally NOT overridden. The chart must
+          # resolve them from `.Chart.AppVersion` (which the Sync Chart.yaml
+          # step above set to ${VERSION}). If this install works, the chart
+          # is correctly wired. Only the repository is overridden here, to
+          # pull directly from GHCR (the proxy registry is only reachable
+          # from EC / KOTS-managed clusters, not this ephemeral CMX k3s).
           helm install groovelab chart/ \
             --namespace "$NAMESPACE" \
             --set image.frontend.repository="${{ env.GHCR_PREFIX }}/groovelab-frontend" \
-            --set image.frontend.tag="${{ env.VERSION }}" \
             --set image.backend.repository="${{ env.GHCR_PREFIX }}/groovelab-backend" \
-            --set image.backend.tag="${{ env.VERSION }}" \
             --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
             --set global.replicated.dockerconfigjson=null \
             --set cert-manager.enabled=false \
@@ -275,13 +295,13 @@ jobs:
       - name: Upgrade test (helm upgrade in-place)
         run: |
           NAMESPACE=groovelab
-          # Re-run helm upgrade with same version to validate upgrade path
+          # Re-run helm upgrade with same version to validate upgrade path.
+          # Image tags intentionally NOT overridden -- same reasoning as the
+          # install step above (.Chart.AppVersion is the source of truth).
           helm upgrade groovelab chart/ \
             --namespace "$NAMESPACE" \
             --set image.frontend.repository="${{ env.GHCR_PREFIX }}/groovelab-frontend" \
-            --set image.frontend.tag="${{ env.VERSION }}" \
             --set image.backend.repository="${{ env.GHCR_PREFIX }}/groovelab-backend" \
-            --set image.backend.tag="${{ env.VERSION }}" \
             --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
             --set global.replicated.dockerconfigjson=null \
             --set cert-manager.enabled=false \
