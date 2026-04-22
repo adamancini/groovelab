@@ -23,7 +23,7 @@ const volumeSetter = vi.fn();
 vi.mock("tone", () => {
   class Sampler {
     public volume: { value: number };
-    constructor(_opts: unknown) {
+    constructor() {
       this.volume = {
         get value() {
           return 0;
