@@ -19,96 +19,154 @@ import TypedAnswer, {
 import FretboardTap from "../components/flashcards/FretboardTap";
 import AnswerFeedback from "../components/flashcards/AnswerFeedback";
 import Fretboard from "../components/Fretboard";
+import type * as api from "../lib/api";
+
+// Tone.js mock: jsdom has no AudioContext and Tone.Sampler would otherwise
+// try to load samples over the network. The FlashcardSession page auto-plays
+// chord audio when a card with a `chordNotes` value enters the answering
+// phase (see Learn.tsx's sibling FlashcardSession.tsx). Without this mock,
+// every FlashcardSession test throws "param must be an AudioParam" inside
+// Tone.Sampler. Mirrors the pattern in flashcard-session.audio.test.tsx.
+vi.mock("tone", () => {
+  class Sampler {
+    public volume: { value: number };
+    constructor() {
+      this.volume = { value: 0 };
+    }
+    toDestination() {
+      return this;
+    }
+    triggerAttackRelease = vi.fn();
+    releaseAll = vi.fn();
+    dispose = vi.fn();
+  }
+  return {
+    Sampler,
+    start: vi.fn().mockResolvedValue(undefined),
+    loaded: vi.fn().mockResolvedValue(undefined),
+    getContext: () => ({ state: "running" }),
+  };
+});
 
 // ---------------------------------------------------------------------------
 // Test data
 // ---------------------------------------------------------------------------
 
-const MOCK_TOPICS = [
+// Shape matches FlashcardTopic in src/lib/api.ts:
+//   { topic, card_count, mastery_pct?, practiced_count? }
+// mastery_pct is a 0.0–1.0 fraction; Learn.tsx multiplies by 100 for display.
+// Topic slugs use underscores so the component's `_` -> " " + title-case
+// transform produces the expected display names (e.g. "Major Chords").
+const MOCK_TOPICS: api.FlashcardTopic[] = [
   {
-    id: "major-chords",
-    name: "Major Chords",
-    keys_mastered: 5,
-    keys_total: 12,
-    accuracy: 72,
+    topic: "major_chords",
+    card_count: 12,
+    mastery_pct: 0.72,
+    practiced_count: 5,
   },
   {
-    id: "minor-scales",
-    name: "Minor Scales",
-    keys_mastered: 3,
-    keys_total: 12,
-    accuracy: 45,
+    topic: "minor_scales",
+    card_count: 12,
+    mastery_pct: 0.45,
+    practiced_count: 3,
   },
   {
-    id: "intervals",
-    name: "Intervals",
-    keys_mastered: 12,
-    keys_total: 12,
-    accuracy: 98,
+    topic: "intervals",
+    card_count: 12,
+    mastery_pct: 0.98,
+    practiced_count: 12,
   },
 ];
 
+// MOCK_SESSION uses the RAW backend wire format (see api.ts RawSessionCard /
+// RawSessionResponse). fetchSession() transforms this via transformSessionCard
+// into the frontend Flashcard shape. Key fields:
+//   - question: { prompt } (plain string on the card after transform)
+//   - direction: drives answerKey ("notes" | "name" | "intervals")
+//   - correct_answer / distractors: RawAnswerData objects; after transform,
+//     their `notes` field becomes the display label and testID suffix.
+//   - options: NUMBER of options to show, not an array.
+//   - stage: 0 (4-choice), 1 (3-choice), 2 (typed), 3 (fretboard).
 const MOCK_SESSION = {
   session_id: "sess-001",
-  topic: "major-chords",
+  topic: "major_chords",
+  total: 4,
   cards: [
     {
       id: "card-1",
-      question: "What are the tones of C Major?",
-      stage: 0 as const,
-      options: ["C E G", "C Eb G", "C E G#", "C F G"],
+      direction: "name_to_notes",
+      question: { prompt: "What are the tones of C Major?" },
+      correct_answer: { notes: "C E G" },
+      distractors: [
+        { notes: "C Eb G" },
+        { notes: "C E G#" },
+        { notes: "C F G" },
+      ],
+      stage: 0,
+      options: 4,
     },
     {
       id: "card-2",
-      question: "What are the tones of D Major?",
-      stage: 1 as const,
-      options: ["D F# A", "D F A", "D Gb A"],
+      direction: "name_to_notes",
+      question: { prompt: "What are the tones of D Major?" },
+      correct_answer: { notes: "D F# A" },
+      distractors: [
+        { notes: "D F A" },
+        { notes: "D Gb A" },
+      ],
+      stage: 1,
+      options: 3,
     },
     {
       id: "card-3",
-      question: "Spell E Major",
-      stage: 2 as const,
+      direction: "name_to_notes",
+      question: { prompt: "Spell E Major" },
+      correct_answer: { notes: "E G# B" },
+      stage: 2,
+      options: 1,
     },
     {
       id: "card-4",
-      question: "Tap the C Major triad on the fretboard",
-      stage: 3 as const,
-      fretboard_positions: [
-        { string: 2, fret: 3, label: "C" },
-        { string: 1, fret: 2, label: "E" },
-        { string: 0, fret: 0, label: "G" },
-      ],
+      direction: "name_to_notes",
+      question: { prompt: "Tap the C Major triad on the fretboard" },
+      correct_answer: { notes: "C E G" },
+      stage: 3,
+      options: 1,
     },
   ],
 };
 
+// MOCK_ANSWER_* use the raw backend AnswerResponse shape. The frontend's
+// transformAnswerResponse maps this to AnswerResult. Notes on behavior:
+//   - correct_answer is returned as a RawAnswerData object, not a display
+//     string; the transform derives the display string from its `notes`.
+//   - session_progress on the wire has {answered,total,correct,incorrect};
+//     the transform zero-fills streak/new_cards/review_cards since the
+//     backend (backend/internal/flashcards/models.go SessionProgress) does
+//     not emit them today.
 const MOCK_ANSWER_CORRECT = {
   correct: true,
-  correct_answer: "C E G",
+  correct_answer: { notes: "C E G" },
   explanation: "1st, 3rd, 5th of the C major scale",
   next_card: MOCK_SESSION.cards[1],
   session_progress: {
     answered: 1,
     total: 4,
     correct: 1,
-    streak: 1,
-    new_cards: 1,
-    review_cards: 0,
+    incorrect: 0,
   },
 };
 
 const MOCK_ANSWER_WRONG = {
   correct: false,
-  correct_answer: "C E G",
+  correct_answer: { notes: "C E G" },
   explanation: "The major triad uses the 1st, 3rd, and 5th scale degrees",
   next_card: MOCK_SESSION.cards[1],
   session_progress: {
     answered: 1,
     total: 4,
     correct: 0,
-    streak: 0,
-    new_cards: 1,
-    review_cards: 0,
+    incorrect: 1,
   },
   correct_positions: [
     { string: 2, fret: 3, label: "C" },
@@ -194,22 +252,23 @@ describe("Learn (topic grid)", () => {
     expect(screen.getByText("98% accuracy")).toBeInTheDocument();
   });
 
-  it("shows mastery dots for each topic", async () => {
+  it("shows card count and practiced count for each topic", async () => {
     renderWithProviders(<Learn />);
 
     await screen.findByText("Major Chords");
-    // Each topic card has 12 dots
-    const majorChordCard = screen.getByTestId("topic-card-major-chords");
-    const dots = majorChordCard.querySelectorAll("span[aria-hidden]");
-    expect(dots).toHaveLength(12);
+    // Learn.tsx renders "<card_count> cards · <practiced_count> practiced"
+    // when practiced_count > 0. See Learn.tsx lines 83-86.
+    expect(screen.getByText("12 cards · 5 practiced")).toBeInTheDocument();
+    expect(screen.getByText("12 cards · 3 practiced")).toBeInTheDocument();
+    expect(screen.getByText("12 cards · 12 practiced")).toBeInTheDocument();
   });
 
   it("links each topic to /learn/:topic", async () => {
     renderWithProviders(<Learn />);
 
     await screen.findByText("Major Chords");
-    const link = screen.getByTestId("topic-card-major-chords");
-    expect(link).toHaveAttribute("href", "/learn/major-chords");
+    const link = screen.getByTestId("topic-card-major_chords");
+    expect(link).toHaveAttribute("href", "/learn/major_chords");
   });
 
   it("shows loading state initially", () => {
@@ -773,26 +832,30 @@ describe("FlashcardSession", () => {
     );
   });
 
-  it("shows session summary with accuracy and streak after all cards", async () => {
+  it("shows session summary with accuracy after all cards", async () => {
+    // Raw backend answer shape. Backend SessionProgress carries
+    // {answered,total,correct,incorrect} only — streak/new_cards/
+    // review_cards are zero-filled by transformAnswerResponse until the
+    // backend model grows those fields. Asserting on them here would
+    // encode a contract the backend does not ship.
     const finalAnswer = {
       correct: true,
-      correct_answer: "C E G",
+      correct_answer: { notes: "C E G" },
       explanation: "done",
       next_card: null,
       session_progress: {
         answered: 4,
         total: 4,
         correct: 3,
-        streak: 2,
-        new_cards: 3,
-        review_cards: 1,
+        incorrect: 1,
       },
     };
 
     // Start with a session that has only 1 card
     const singleCardSession = {
       session_id: "sess-single",
-      topic: "major-chords",
+      topic: "major_chords",
+      total: 1,
       cards: [MOCK_SESSION.cards[0]],
     };
 
@@ -813,30 +876,31 @@ describe("FlashcardSession", () => {
 
     await screen.findByTestId("session-summary");
     expect(screen.getByTestId("summary-accuracy")).toHaveTextContent("75%");
-    expect(screen.getByTestId("summary-streak")).toHaveTextContent("2");
-    expect(screen.getByTestId("summary-new")).toHaveTextContent("3");
-    expect(screen.getByTestId("summary-reviewed")).toHaveTextContent("1");
+    // Streak/new/reviewed render 0 until the backend emits them; see note
+    // on transformAnswerResponse in src/lib/api.ts.
+    expect(screen.getByTestId("summary-streak")).toHaveTextContent("0");
+    expect(screen.getByTestId("summary-new")).toHaveTextContent("0");
+    expect(screen.getByTestId("summary-reviewed")).toHaveTextContent("0");
   });
 
   it("shows guest sign-in prompt on session summary when not authenticated", async () => {
     const finalAnswer = {
       correct: true,
-      correct_answer: "A",
+      correct_answer: { notes: "C E G" },
       explanation: "done",
       next_card: null,
       session_progress: {
         answered: 1,
         total: 1,
         correct: 1,
-        streak: 1,
-        new_cards: 1,
-        review_cards: 0,
+        incorrect: 0,
       },
     };
 
     const singleCardSession = {
       session_id: "sess-guest",
-      topic: "major-chords",
+      topic: "major_chords",
+      total: 1,
       cards: [MOCK_SESSION.cards[0]],
     };
 
