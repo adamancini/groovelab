@@ -129,15 +129,55 @@ jobs:
           echo "Chart.yaml synced:"
           grep -E "^(version|appVersion):" chart/Chart.yaml
 
-      - name: Package and create release on Unstable
+      - name: Sync release/helmchart.yaml chartVersion to tag
+        # release/helmchart.yaml is a KOTS HelmChart CR whose
+        # .spec.chart.chartVersion must match the packaged chart's semver
+        # (chart/Chart.yaml.version). If this drifts, KOTS cannot resolve
+        # the chart inside the release. Same rewrite pattern as Chart.yaml.
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          CHART_VERSION="${VERSION#v}"
+          yq -i ".spec.chart.chartVersion = \"${CHART_VERSION}\"" release/helmchart.yaml
+          echo "release/helmchart.yaml synced:"
+          grep -E "chartVersion:" release/helmchart.yaml
+
+      - name: Package chart
+        # Fixes GRO-kydk: `replicated release create --yaml-dir chart/`
+        # silently drops `.tpl` files (_helpers.tpl, NOTES.txt), producing
+        # uninstallable releases. `helm package` preserves all files, and
+        # we pass the resulting tarball via `--chart` below. KOTS CRs in
+        # release/ come in via --yaml-dir.
+        id: package
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          CHART_VERSION="${VERSION#v}"
+          helm dependency update chart/
+          mkdir -p /tmp/release-artifacts
+          helm package chart/ \
+            --destination /tmp/release-artifacts/ \
+            --version "${CHART_VERSION}" \
+            --app-version "${VERSION}"
+          CHART_TGZ="/tmp/release-artifacts/groovelab-${CHART_VERSION}.tgz"
+          echo "chart_tgz=${CHART_TGZ}" >> "$GITHUB_OUTPUT"
+          echo "Packaged: ${CHART_TGZ}"
+          echo "Verifying helpers and NOTES preserved in packaged chart..."
+          tar tzf "${CHART_TGZ}" | grep -E '(_helpers\.tpl|NOTES\.txt)$' || {
+            echo "FAIL: packaged chart missing _helpers.tpl or NOTES.txt"
+            exit 1
+          }
+
+      - name: Create release on Unstable
+        # Replicated release: chart tarball via --chart (preserves helpers),
+        # KOTS CRs (Application, HelmChart, EC Config) via --yaml-dir release/.
+        # This replaces the previous `--yaml-dir chart/` flow that stripped
+        # .tpl files; see GRO-zkhp / GRO-kydk for context.
         id: release
         run: |
-          helm dependency update chart/
-          # Helm v4: extract subchart tarballs
-          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
-
           RELEASE_OUTPUT=$(replicated release create \
-            --yaml-dir chart/ \
+            --chart "${{ steps.package.outputs.chart_tgz }}" \
+            --yaml-dir release/ \
             --promote Unstable \
             --version "${{ env.VERSION }}" \
             --app "${{ env.APP_SLUG }}")

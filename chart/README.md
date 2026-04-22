@@ -44,6 +44,38 @@ This keeps the chart checked into git in a runnable state (local
 `helm template chart/` renders a valid deployment pointing at the last
 shipped image) while guaranteeing CI-produced releases match the tag.
 
+### release/helmchart.yaml also carries chartVersion
+
+The KOTS `HelmChart` CR at `release/helmchart.yaml` has a
+`.spec.chart.chartVersion` field that must match `chart/Chart.yaml.version`.
+If it drifts, KOTS cannot resolve the chart inside the downloaded release.
+
+CI rewrites this file too, in the step right after Chart.yaml sync:
+
+```yaml
+- name: Sync release/helmchart.yaml chartVersion to tag
+  env:
+    VERSION: ${{ env.VERSION }}
+  run: |
+    CHART_VERSION="${VERSION#v}"
+    yq -i ".spec.chart.chartVersion = \"${CHART_VERSION}\"" release/helmchart.yaml
+```
+
+The local `make release-unstable VERSION=vX.Y.Z` target performs the same
+three-file rewrite (`chart/Chart.yaml.version`, `chart/Chart.yaml.appVersion`,
+`release/helmchart.yaml.spec.chart.chartVersion`) before packaging, so
+developers cutting a release locally produce the same artifact shape as CI.
+
+### Packaging path: `helm package` + `--chart`, not `--yaml-dir chart/`
+
+Releases are created with `helm package chart/` (producing
+`groovelab-<version>.tgz`) passed to `replicated release create --chart`,
+and KOTS CRs are passed via `--yaml-dir release/`. **Do not** use
+`replicated release create --yaml-dir chart/` — it filters inputs to
+`.yaml`/`.yml`, silently dropping `_helpers.tpl` and `NOTES.txt`, which
+makes every `{{ include "groovelab.fullname" . }}` call in the chart fail
+at install time. See GRO-kydk and GRO-zkhp for context.
+
 ### Never hand-edit Chart.yaml.version on main
 
 Beyond bumping it to "what the next release will be", do not touch

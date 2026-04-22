@@ -5,6 +5,12 @@ metadata:
 spec:
   chart:
     name: groovelab
+    # chartVersion is rewritten at release time (both in CI
+    # via .github/workflows/release.yaml and locally via `make release-unstable`)
+    # to match `chart/Chart.yaml.version`. The checked-in value here only
+    # needs to be a valid semver so `replicated lint` passes; keep it in
+    # sync with Chart.yaml on `main` to minimise noise in diffs. CI owns
+    # the authoritative rewrite. See chart/README.md "Version invariant".
     chartVersion: 0.1.1
   releaseName: groovelab
   namespace: groovelab
