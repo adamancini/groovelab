@@ -180,17 +180,39 @@ jobs:
         # (Application, HelmChart, EC Config). Replaces the previous
         # `--yaml-dir chart/` flow that stripped .tpl files. See
         # GRO-zkhp / GRO-kydk for context.
+        #
+        # GRO-5ugn: extract the sequence via `-o json | jq -r .sequence`
+        # rather than parsing the tabular output with awk. The table
+        # prepends a Unicode bullet (`.`) to each data row, which the
+        # previous `awk '{print $1}'` captured verbatim, producing a
+        # non-numeric SEQUENCE that broke the downstream `promote-stable`
+        # call (`Error: Failed to parse sequence argument`). Structured
+        # JSON output (`--output json`) is supported on
+        # `replicated release create` in v0.124.5 and returns
+        # `{"sequence": <int>, ...}`. `jq` is pre-installed on
+        # ubuntu-latest runners.
         id: release
         run: |
-          RELEASE_OUTPUT=$(replicated release create \
+          RELEASE_JSON=$(replicated release create \
             --yaml-dir release/ \
             --promote Unstable \
             --version "${{ env.VERSION }}" \
-            --app "${{ env.APP_SLUG }}")
-          echo "$RELEASE_OUTPUT"
+            --app "${{ env.APP_SLUG }}" \
+            --output json)
+          echo "$RELEASE_JSON"
 
-          # Extract sequence number for later promotion
-          SEQUENCE=$(echo "$RELEASE_OUTPUT" | awk '/SEQUENCE/{getline; print $1}')
+          # Extract sequence number for later promotion. Validate that
+          # the JSON-parsed value is numeric before exporting it to the
+          # downstream job so a schema change surfaces here instead of
+          # as an opaque "Failed to parse sequence argument" in
+          # promote-stable.
+          SEQUENCE=$(echo "$RELEASE_JSON" | jq -r '.sequence')
+          if ! [[ "$SEQUENCE" =~ ^[0-9]+$ ]]; then
+            echo "FAIL: extracted SEQUENCE is not a positive integer: '${SEQUENCE}'"
+            echo "Raw release-create output:"
+            echo "$RELEASE_JSON"
+            exit 1
+          fi
           echo "sequence=${SEQUENCE}" >> "$GITHUB_OUTPUT"
           echo "Release created: ${{ env.VERSION }} (sequence: ${SEQUENCE})"
 
