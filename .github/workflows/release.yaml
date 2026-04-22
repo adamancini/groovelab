@@ -182,12 +182,25 @@ jobs:
           NAMESPACE=groovelab
           kubectl create namespace "$NAMESPACE"
 
+          # Label + annotate the Secret with Helm ownership metadata so
+          # the subsequent `helm install groovelab` step adopts this
+          # pre-applied Secret instead of failing with:
+          #   "invalid ownership metadata; missing key
+          #    \"app.kubernetes.io/managed-by\": must be set to \"Helm\""
+          # The CNPG Cluster bootstrap (below) requires this Secret to
+          # exist before `helm install` runs, so we pre-apply it and tag
+          # it for Helm adoption. See GRO-ln26.
           kubectl apply -f - <<EOF
           apiVersion: v1
           kind: Secret
           metadata:
             name: groovelab-cnpg-credentials
             namespace: ${NAMESPACE}
+            labels:
+              app.kubernetes.io/managed-by: Helm
+            annotations:
+              meta.helm.sh/release-name: groovelab
+              meta.helm.sh/release-namespace: groovelab
           type: kubernetes.io/basic-auth
           stringData:
             username: groovelab
