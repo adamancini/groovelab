@@ -207,18 +207,30 @@ func TestSeedCreatesAllTopics(t *testing.T) {
 	topics, err := env.store.ListDistinctTopics(ctx)
 	require.NoError(t, err)
 
+	// The 7 canonical chord-type topics must be present. Additional topics
+	// added by future migrations (e.g. chord_intervals from 00010) are
+	// permitted -- we only guard that the baseline seven remain.
 	expected := []string{
 		"augmented_chords", "diminished_chords", "dominant_7th_chords",
 		"major_7th_chords", "major_chords", "minor_7th_chords", "minor_chords",
 	}
-	assert.Equal(t, expected, topics, "all 7 chord type topics must be present")
+	for _, want := range expected {
+		assert.Contains(t, topics, want, "canonical topic %q must be present", want)
+	}
 }
 
 // ---------- Topics Endpoint Tests ----------
 
 func TestTopics_GuestReturnsTopicsWithoutMastery(t *testing.T) {
 	env := setupTestEnv(t)
+	ctx := context.Background()
 	client := newClientWithCookies(t)
+
+	// Derive the expected topic count from whatever the migrations actually
+	// seeded so future topic additions don't require test churn.
+	seededTopics, err := env.store.ListDistinctTopics(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, seededTopics, "migrations must seed at least one topic")
 
 	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/topics")
 	body := readBody(t, resp)
@@ -227,7 +239,8 @@ func TestTopics_GuestReturnsTopicsWithoutMastery(t *testing.T) {
 
 	var topics []flashcards.TopicSummary
 	require.NoError(t, json.Unmarshal(body, &topics))
-	assert.Len(t, topics, 7, "should return 7 topics")
+	assert.Len(t, topics, len(seededTopics),
+		"should return one entry per seeded topic (%d)", len(seededTopics))
 
 	for _, ts := range topics {
 		assert.Greater(t, ts.CardCount, 0, "each topic must have cards")
@@ -239,8 +252,15 @@ func TestTopics_GuestReturnsTopicsWithoutMastery(t *testing.T) {
 
 func TestTopics_AuthenticatedReturnsTopicsWithMastery(t *testing.T) {
 	env := setupTestEnv(t)
+	ctx := context.Background()
 	client := newClientWithCookies(t)
 	registerAndLogin(t, client, env.server.URL, "topics-test@example.com", "securepassword1")
+
+	// Derive the expected topic count from whatever the migrations actually
+	// seeded so future topic additions don't require test churn.
+	seededTopics, err := env.store.ListDistinctTopics(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, seededTopics, "migrations must seed at least one topic")
 
 	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/topics")
 	body := readBody(t, resp)
@@ -249,7 +269,8 @@ func TestTopics_AuthenticatedReturnsTopicsWithMastery(t *testing.T) {
 
 	var topics []flashcards.TopicSummary
 	require.NoError(t, json.Unmarshal(body, &topics))
-	assert.Len(t, topics, 7, "should return 7 topics")
+	assert.Len(t, topics, len(seededTopics),
+		"should return one entry per seeded topic (%d)", len(seededTopics))
 
 	for _, ts := range topics {
 		assert.Greater(t, ts.CardCount, 0, "each topic must have cards")
