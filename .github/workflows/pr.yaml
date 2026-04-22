@@ -217,12 +217,25 @@ jobs:
           kubectl create namespace "$NAMESPACE"
 
           # CNPG credentials
+          # Label + annotate the Secret with Helm ownership metadata so
+          # the subsequent `helm install groovelab` step adopts this
+          # pre-applied Secret instead of failing with:
+          #   "invalid ownership metadata; missing key
+          #    \"app.kubernetes.io/managed-by\": must be set to \"Helm\""
+          # The CNPG Cluster bootstrap (below) requires this Secret to
+          # exist before `helm install` runs, so we pre-apply it and tag
+          # it for Helm adoption. See GRO-ln26 / GRO-kr54.
           kubectl apply -f - <<EOF
           apiVersion: v1
           kind: Secret
           metadata:
             name: groovelab-cnpg-credentials
             namespace: ${NAMESPACE}
+            labels:
+              app.kubernetes.io/managed-by: Helm
+            annotations:
+              meta.helm.sh/release-name: groovelab
+              meta.helm.sh/release-namespace: groovelab
           type: kubernetes.io/basic-auth
           stringData:
             username: groovelab
@@ -230,12 +243,23 @@ jobs:
           EOF
 
           # CNPG Cluster
+          # Same Helm-adoption metadata as the Secret above. The chart
+          # also renders a CNPG Cluster named `groovelab-postgresql` (see
+          # chart/templates/postgresql/cluster.yaml, gated on
+          # .Values.cnpg.createCluster which defaults to true). Pre-apply
+          # it here so `kubectl wait --for=condition=Ready` can gate the
+          # install on a healthy DB, then let `helm install` adopt it.
           kubectl apply -f - <<EOF
           apiVersion: postgresql.cnpg.io/v1
           kind: Cluster
           metadata:
             name: groovelab-postgresql
             namespace: ${NAMESPACE}
+            labels:
+              app.kubernetes.io/managed-by: Helm
+            annotations:
+              meta.helm.sh/release-name: groovelab
+              meta.helm.sh/release-namespace: groovelab
           spec:
             instances: 1
             bootstrap:
