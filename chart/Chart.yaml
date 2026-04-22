@@ -15,7 +15,13 @@ dependencies:
     repository: https://cloudnative-pg.github.io/charts
     condition: cloudnative-pg.enabled
   - name: cert-manager
-    version: "1.x.x"
+    # Pinned to the 1.19.x line: customer clusters run 1.19.4, and cert-manager
+    # 1.20 moved `networkPolicy.enabled` from top-level to
+    # `webhook.networkPolicy.enabled`. Crossing that schema break must be a
+    # deliberate, tested upgrade story — not an implicit `helm dep update` side
+    # effect. See chart/README.md "cert-manager version pin rationale" and
+    # nd bug GRO-k6de for context.
+    version: ">=1.19.0,<1.20.0"
     repository: https://charts.jetstack.io
     condition: cert-manager.enabled
   - name: replicated

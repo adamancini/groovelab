@@ -1,5 +1,9 @@
 .DS_Store
-*.tgz
+# Only ignore top-level packaged chart archives; keep charts/*.tgz so Helm v4+
+# can resolve subchart dependencies from the committed dep tarballs without
+# needing them unpacked. Without this scope, `helm template` / `helm lint`
+# report "missing dependencies" even after `helm dependency update`.
+/*.tgz
 .git/
 .gitignore
 .claude/

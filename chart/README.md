@@ -66,6 +66,46 @@ helm template chart/ \
 helm lint chart/
 ```
 
+## cert-manager version pin rationale
+
+`chart/Chart.yaml` pins the `cert-manager` subchart to `>=1.19.0,<1.20.0`
+(the 1.19.x line). This is deliberate.
+
+### Why cap at <1.20
+
+- Customer clusters (and the dev/CMX environments we test against) run
+  cert-manager 1.19.4.
+- cert-manager 1.20 is a **breaking values-schema change**: the
+  `networkPolicy.enabled` key moved from the top level to
+  `webhook.networkPolicy.enabled`. Values that were valid against 1.19 are
+  rejected by the 1.20 JSON schema, and the 1.20 `networkpolicy-cert-manager`
+  template still references a path that the 1.20 defaults no longer populate,
+  producing a nil-pointer render error partway through upgrade.
+- A wide pin like `1.x.x` lets `helm dep update` float silently forward to
+  1.20.x at release build time — the tarball we ship will refuse to upgrade a
+  customer cluster still on 1.19.x. This actually happened on the `v0.1.0`
+  release; see nd bug `GRO-k6de` and `GRO-a2b1` Phase B notes.
+
+### What must change before we bump to 1.20+
+
+Crossing the 1.19 → 1.20 boundary must be its own tested story, not an
+implicit `helm dep update` side effect. The migration work:
+
+1. Audit every cert-manager passthrough value under the `cert-manager:` key in
+   `chart/values.yaml` against the 1.20 schema (`helm show values jetstack/cert-manager --version 1.20.x`).
+2. If we ever set `networkPolicy.enabled` for cert-manager, move it under
+   `webhook.networkPolicy.enabled`.
+3. Dry-run `helm upgrade` on a 1.19.4 cluster with the 1.20.x-resolved chart and
+   confirm render + schema validation both succeed.
+4. Run a fresh `helm install` with the 1.20.x chart on a throwaway cluster and
+   confirm cert-manager pods reach Ready and issuers still work.
+5. Only then bump the pin to `>=1.20.0,<1.21.0` (or widen to `>=1.19.0,<1.21.0`
+   with a compatibility test matrix), update this section, and regenerate the
+   release.
+
+Until that work is done, the chart resolves cert-manager to the 1.19.x line on
+every release rebuild, and in-place upgrades on 1.19.x clusters keep working.
+
 ## Related files
 
 - `.github/workflows/release.yaml` — tag-driven release workflow; rewrites
