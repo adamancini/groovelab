@@ -74,16 +74,18 @@ release-unstable: _require-version _require-token chart-lint ## Cut a local Unst
 	yq -i ".spec.chart.chartVersion = \"$${CHART_SEMVER}\"" $(RELEASE_DIR)/helmchart.yaml; \
 	echo "==> Updating chart dependencies"; \
 	helm dependency update $(CHART_DIR); \
-	echo "==> Packaging chart to $(DIST_DIR)/"; \
-	mkdir -p $(DIST_DIR); \
-	helm package $(CHART_DIR) --destination $(DIST_DIR); \
-	CHART_TGZ="$(DIST_DIR)/$(APP_SLUG)-$${CHART_SEMVER}.tgz"; \
+	echo "==> Packaging chart into $(RELEASE_DIR)/ (co-located with KOTS CRs for --yaml-dir)"; \
+	helm package $(CHART_DIR) --destination $(RELEASE_DIR); \
+	CHART_TGZ="$(RELEASE_DIR)/$(APP_SLUG)-$${CHART_SEMVER}.tgz"; \
 	echo "==> Verifying helpers preserved in $${CHART_TGZ}"; \
 	tar tzf "$${CHART_TGZ}" | grep -E '(_helpers\.tpl|NOTES\.txt)$$' >/dev/null || { \
-		echo "FAIL: packaged chart missing _helpers.tpl or NOTES.txt"; exit 1; }; \
+		echo "FAIL: packaged chart missing _helpers.tpl or NOTES.txt"; \
+		rm -f "$${CHART_TGZ}"; \
+		exit 1; \
+	}; \
+	trap 'rm -f $${CHART_TGZ}' EXIT; \
 	echo "==> Creating Replicated release on Unstable"; \
 	replicated release create \
-		--chart "$${CHART_TGZ}" \
 		--yaml-dir $(RELEASE_DIR) \
 		--promote Unstable \
 		--version "$${VERSION}" \

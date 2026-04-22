@@ -66,15 +66,32 @@ three-file rewrite (`chart/Chart.yaml.version`, `chart/Chart.yaml.appVersion`,
 `release/helmchart.yaml.spec.chart.chartVersion`) before packaging, so
 developers cutting a release locally produce the same artifact shape as CI.
 
-### Packaging path: `helm package` + `--chart`, not `--yaml-dir chart/`
+### Packaging path: `helm package` into `release/`, then `--yaml-dir release/`
 
-Releases are created with `helm package chart/` (producing
-`groovelab-<version>.tgz`) passed to `replicated release create --chart`,
-and KOTS CRs are passed via `--yaml-dir release/`. **Do not** use
-`replicated release create --yaml-dir chart/` — it filters inputs to
-`.yaml`/`.yml`, silently dropping `_helpers.tpl` and `NOTES.txt`, which
-makes every `{{ include "groovelab.fullname" . }}` call in the chart fail
-at install time. See GRO-kydk and GRO-zkhp for context.
+Releases are created by:
+
+1. `helm package chart/ --destination release/` — produces
+   `release/groovelab-<version>.tgz` with all files preserved
+   (`_helpers.tpl`, `NOTES.txt`, subchart tarballs).
+2. `replicated release create --yaml-dir release/ --promote Unstable ...`
+   — the `release/` directory now contains both the packaged chart
+   tarball and the KOTS CRs (`application.yaml`, `helmchart.yaml`,
+   `embedded-cluster-config.yaml`), which the Replicated CLI bundles
+   into one release.
+
+**Do not** use `replicated release create --yaml-dir chart/` — it filters
+inputs to `.yaml`/`.yml`, silently dropping `_helpers.tpl` and `NOTES.txt`,
+which makes every `{{ include "groovelab.fullname" . }}` call in the chart
+fail at install time. See GRO-kydk and GRO-zkhp for context.
+
+**Why not `--chart <tgz> --yaml-dir release/`?** The Replicated CLI
+(tested with v0.124.5) treats those flags as mutually exclusive. Dropping
+the tarball into `release/` and using a single `--yaml-dir` is the canonical
+way to combine a packaged chart with KOTS manifests in one invocation.
+
+The packaged `.tgz` that lands in `release/` is gitignored
+(`release/*.tgz` in `.gitignore`) so local release runs do not pollute
+the working tree.
 
 ### Never hand-edit Chart.yaml.version on main
 

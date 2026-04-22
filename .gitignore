@@ -18,3 +18,8 @@ chart/*.tgz
 
 # Makefile chart-package output
 /dist/
+
+# Packaged chart tarball dropped into release/ during release-unstable
+# (co-located with KOTS CRs so `replicated release create --yaml-dir release/`
+# picks up both). Should not be committed.
+release/*.tgz
