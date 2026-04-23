@@ -245,11 +245,22 @@ jobs:
             CHANNEL_ID="$EXISTING"
             echo "Reusing existing channel ${SLUG} (ID: ${CHANNEL_ID})"
           else
+            # `replicated channel create --output json` returns an array
+            # (`[{"id":"...","name":"..."}]`) in current CLI versions. Accept
+            # either shape via an `if type==array` fallback so we don't break
+            # when the CLI normalizes to a single object in the future.
             CHANNEL_JSON=$(replicated channel create \
               --name "$SLUG" \
               --app "${APP_SLUG}" \
               --output json)
-            CHANNEL_ID=$(echo "$CHANNEL_JSON" | jq -r '.channel.id // .id // empty')
+            CHANNEL_ID=$(echo "$CHANNEL_JSON" \
+              | jq -r --arg n "$SLUG" '
+                  if type == "array" then
+                    (.[] | select(.name == $n) | .id)
+                  else
+                    (.channel.id // .id // empty)
+                  end' \
+              | head -n1)
             if [ -z "$CHANNEL_ID" ]; then
               CHANNEL_ID=$(replicated channel ls --app "${APP_SLUG}" --output json \
                 | jq -r --arg n "$SLUG" '.[] | select(.name == $n) | .id')
@@ -271,7 +282,14 @@ jobs:
             --version "$CHART_VERSION" \
             --app "${APP_SLUG}" \
             --output json)
-          SEQ=$(echo "$RELEASE_JSON" | jq -r '.sequence // .release.sequence // empty')
+          # CLI returns either an object or a single-element array; handle both.
+          SEQ=$(echo "$RELEASE_JSON" \
+            | jq -r '
+                if type == "array" then
+                  (.[0].sequence // empty)
+                else
+                  (.sequence // .release.sequence // empty)
+                end')
           echo "sequence=${SEQ}" >> "$GITHUB_OUTPUT"
           echo "Release sequence: ${SEQ} (version ${CHART_VERSION}) promoted to ${SLUG}"
 
@@ -296,7 +314,14 @@ jobs:
               --expires-in 24h \
               --app "${APP_SLUG}" \
               --output json)
-            LICENSE_ID=$(echo "$CUSTOMER_JSON" | jq -r '.installationId // .customer.installationId // empty')
+            LICENSE_ID=$(echo "$CUSTOMER_JSON" \
+              | jq -r --arg n "$CUSTOMER_NAME" '
+                  if type == "array" then
+                    (.[] | select(.name == $n) | .installationId // empty)
+                  else
+                    (.installationId // .customer.installationId // empty)
+                  end' \
+              | head -n1)
             if [ -z "$LICENSE_ID" ] || [ "$LICENSE_ID" = "null" ]; then
               LICENSE_ID=$(replicated customer ls --app "${APP_SLUG}" --output json \
                 | jq -r --arg n "$CUSTOMER_NAME" '.[] | select(.name == $n) | .installationId')
@@ -329,7 +354,14 @@ jobs:
             --wait 10m \
             --app "${APP_SLUG}" \
             --output json)
-          CLUSTER_ID=$(echo "$CLUSTER_JSON" | jq -r '.id // .cluster.id // empty')
+          CLUSTER_ID=$(echo "$CLUSTER_JSON" \
+            | jq -r --arg n "$CLUSTER_NAME" '
+                if type == "array" then
+                  (.[] | select(.name == $n) | .id // empty)
+                else
+                  (.id // .cluster.id // empty)
+                end' \
+            | head -n1)
           echo "id=${CLUSTER_ID}" >> "$GITHUB_OUTPUT"
           echo "name=${CLUSTER_NAME}" >> "$GITHUB_OUTPUT"
           echo "Cluster provisioned: ${CLUSTER_NAME} (ID: ${CLUSTER_ID})"
