@@ -47,6 +47,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Docker buildx caches scoped per-workflow (GRO-i987) so pr.yaml and
+      # release.yaml don't collide on shared keys, and per-image so frontend
+      # layer churn doesn't invalidate backend layers.
       - name: Build and push frontend
         id: build-frontend
         uses: docker/build-push-action@v6
@@ -57,8 +60,8 @@ jobs:
           tags: |
             ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ steps.meta.outputs.version }}
             ${{ env.GHCR_PREFIX }}/groovelab-frontend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend-${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=frontend-${{ github.workflow }}
 
       - name: Build and push backend
         id: build-backend
@@ -70,8 +73,8 @@ jobs:
           tags: |
             ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ steps.meta.outputs.version }}
             ${{ env.GHCR_PREFIX }}/groovelab-backend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend-${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=backend-${{ github.workflow }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3

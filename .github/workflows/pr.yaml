@@ -35,6 +35,8 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: backend/go.mod
+          cache: true
+          cache-dependency-path: backend/go.sum
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -48,6 +50,17 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      # Cache Helm subchart tarballs keyed on Chart.lock hash (GRO-i987).
+      # helm dependency update below is a no-op on cache hit (tarballs already
+      # present + matching Chart.lock), so cache-hit skips subchart re-fetch.
+      - name: Cache helm chart deps
+        uses: actions/cache@v4
+        with:
+          path: chart/charts
+          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
+          restore-keys: |
+            helm-deps-${{ runner.os }}-
+
       - name: Helm lint
         run: |
           helm dependency update chart/
@@ -57,7 +70,9 @@ jobs:
 
       - name: Go test
         working-directory: backend
-        run: go test ./...
+        # -p 4: package-level parallelism (GRO-i987). -shuffle on: surfaces
+        # inter-test ordering bugs without materially slowing the suite.
+        run: go test -p 4 -shuffle=on ./...
 
       - name: npm install
         working-directory: frontend
@@ -100,6 +115,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Docker buildx caches scoped per-workflow (GRO-i987) so pr.yaml and
+      # release.yaml don't collide on shared keys, and per-image so frontend
+      # layer churn doesn't invalidate backend layers.
       - name: Build and push frontend
         id: build-frontend
         uses: docker/build-push-action@v6
@@ -108,8 +126,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=frontend-${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=frontend-${{ github.workflow }}
 
       - name: Build and push backend
         id: build-backend
@@ -119,8 +137,8 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=backend-${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=backend-${{ github.workflow }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
