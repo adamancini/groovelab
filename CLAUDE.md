@@ -53,6 +53,7 @@ distribution workflow, not to sprint ahead of verification.
 - **E2e observability**: timestamped step lines, short per-step timeouts, kubectl polling (not `helm install --wait` alone).
 - **Friction log proactively**: whenever Replicated/Helm/CMX surprises you or a mis-assumption bites, append to `FRICTION_LOG.md` via the `friction-log` skill.
 - **Chart image tags**: never hardcode commit SHAs in `chart/values.yaml`. Leave `image.<side>.tag` empty so `.Chart.AppVersion` is the source of truth; CI rewrites `chart/Chart.yaml` from the git tag before `replicated release create`. See `chart/README.md` for the invariant.
+- **Replicated-by-default**: every release + CI install path uses `replicated.enabled=true` (SDK subchart + `proxy.xyyzx.net/proxy/...` image repo + license-scoped `enterprise-pull-secret`). The `replicated.enabled=false` path exists only for local-dev (helmfile-dev profile). Never add it to production or CI install paths without a documented reason. The `.github/workflows/release.yaml` CMX smoke test is the one carved-out exception (unlicensed ephemeral k3s cluster); the customer-grade install path lives in `.github/workflows/pr.yaml`. See `chart/README.md` "Replicated-enabled by default".
 
 ## Useful References
 
