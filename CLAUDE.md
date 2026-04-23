@@ -54,6 +54,16 @@ distribution workflow, not to sprint ahead of verification.
 - **Friction log proactively**: whenever Replicated/Helm/CMX surprises you or a mis-assumption bites, append to `FRICTION_LOG.md` via the `friction-log` skill.
 - **Chart image tags**: never hardcode commit SHAs in `chart/values.yaml`. Leave `image.<side>.tag` empty so `.Chart.AppVersion` is the source of truth; CI rewrites `chart/Chart.yaml` from the git tag before `replicated release create`. See `chart/README.md` for the invariant.
 
+## Required GitHub Secrets
+
+- `REPLICATED_API_TOKEN` — required for all Replicated CLI calls in `pr.yaml`
+  and `release.yaml` (channel/customer/cluster/release create + customer
+  archive + channel rm).
+- `REPLICATED_ADMIN_TOKEN` — optional. Only consumed by `pr-cleanup.yaml` for
+  `replicated release demote`. Add this if the regular API token lacks
+  `channel demote` permission; otherwise cleanup falls back to `channel rm`
+  alone, which is acceptable for ephemeral per-PR channels.
+
 ## Useful References
 
 - UAT specs: `.vault/knowledge/uat/uat-*.md`

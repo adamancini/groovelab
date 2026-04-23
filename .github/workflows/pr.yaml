@@ -9,6 +9,9 @@ permissions:
   packages: write
   id-token: write  # Required for Cosign keyless signing via OIDC
 
+# Concurrency group is per-PR (shared across all jobs so a new push cancels
+# previous runs). The cmx-test job further scopes via the resources it creates
+# (channel/customer/cluster named by the per-PR slug).
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
   cancel-in-progress: true
@@ -133,13 +136,27 @@ jobs:
             "${{ env.GHCR_PREFIX }}/groovelab-backend@${{ steps.build-backend.outputs.digest }}"
 
   # ── Replicated Release and CMX Test ──────────────────────────────────────
+  # Customer-grade install: per-PR channel + trial customer + ephemeral CMX
+  # cluster + OCI install from registry.replicated.com. Exercises the same
+  # code path a real customer does (proxy.xyyzx.net pulls, Replicated SDK,
+  # license secret shape, channel-gated release visibility). See GRO-lcva.
+  #
+  # Slug normalization extends the platform-examples pattern
+  # (replicatedhq/platform-examples applications/wg-easy/taskfiles/utils.yml
+  # `normalize-name`, which does `tr '/_.' '-'`) with lowercasing,
+  # invalid-char stripping, and a truncate+sha7 fallback for branch names
+  # longer than 36 chars.
+  #
+  # Secret requirements:
+  #   - REPLICATED_API_TOKEN: create channel/customer/cluster + channel archive.
+  #   - REPLICATED_ADMIN_TOKEN (optional): only needed if REPLICATED_API_TOKEN
+  #     lacks `channel demote` permission. Used in pr-cleanup.yaml.
   cmx-test:
     name: Replicated Release and CMX Test
     runs-on: ubuntu-latest
     needs: build-sign
     env:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
-      CHANNEL_NAME: pr-${{ github.event.pull_request.number }}
       IMAGE_TAG: ${{ needs.build-sign.outputs.image-tag }}
     steps:
       - name: Checkout
@@ -158,164 +175,214 @@ jobs:
             | xargs curl -sL \
             | tar xz -C /usr/local/bin replicated
 
-      - name: Create temporary channel
-        id: channel
+      # Step 1 — Compute slug and chart version from the PR branch.
+      # Slug normalization algorithm (see story GRO-lcva):
+      #   1. lowercase
+      #   2. replace '/' '_' '.' with '-' (extends platform-examples
+      #      `tr '/_.' '-'`; see wg-easy/taskfiles/utils.yml `normalize-name`)
+      #   3. strip anything not [a-z0-9-], collapse runs of '-'
+      #   4. trim leading/trailing '-'
+      #   5. if length > 36: truncate to 28, append '-<sha7>' of original name
+      # CHART_VERSION is 0.0.0-pr<N> — pre-release SemVer so it sorts below
+      # any real stable release and cannot accidentally promote past Beta.
+      #
+      # HEAD_REF is attacker-controlled; pass via env and quote in shell to
+      # avoid workflow command injection.
+      - name: Compute slug and chart version
+        id: slug
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          CHANNEL_OUTPUT=$(replicated channel create \
-            --name "${{ env.CHANNEL_NAME }}" \
-            --app "${{ env.APP_SLUG }}")
-          CHANNEL_ID=$(echo "$CHANNEL_OUTPUT" | awk 'NR==2 {print $1}')
-          echo "id=${CHANNEL_ID}" >> "$GITHUB_OUTPUT"
-          echo "Channel created: ${{ env.CHANNEL_NAME }} (ID: ${CHANNEL_ID})"
+          BRANCH="$HEAD_REF"
+          RAW=$(printf '%s' "$BRANCH" \
+            | tr '[:upper:]' '[:lower:]' \
+            | tr '/_.' '-' \
+            | tr -c 'a-z0-9-' '-' \
+            | sed -E 's/-+/-/g; s/^-+//; s/-+$//')
+          if [ "${#RAW}" -gt 36 ]; then
+            HASH=$(printf '%s' "$BRANCH" | sha256sum | cut -c1-7)
+            SLUG="${RAW:0:28}-${HASH}"
+          else
+            SLUG="$RAW"
+          fi
+          # Defensive: ensure slug is non-empty for pathological input.
+          if [ -z "$SLUG" ]; then
+            SLUG="pr-${PR_NUMBER}"
+          fi
+          CHART_VERSION="0.0.0-pr${PR_NUMBER}"
+          echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
+          echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Branch:        ${BRANCH}"
+          echo "Slug:          ${SLUG}  (length ${#SLUG})"
+          echo "Chart version: ${CHART_VERSION}"
 
-      - name: Package and create release
+      # Step 2 — Package the chart into release/ so `replicated release create
+      # --yaml-dir release/` picks up the tgz rather than the raw chart/ tree.
+      - name: Package chart
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
         run: |
           helm dependency update chart/
-          # Helm v4: extract subchart tarballs for replicated release
-          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
-          replicated release create \
-            --yaml-dir chart/ \
-            --promote "${{ env.CHANNEL_NAME }}" \
-            --version "${{ env.IMAGE_TAG }}" \
-            --app "${{ env.APP_SLUG }}"
+          mkdir -p release/
+          helm package chart/ \
+            --version "$CHART_VERSION" \
+            --app-version "pr-$SLUG" \
+            --destination /tmp/
+          mv "/tmp/groovelab-${CHART_VERSION}.tgz" release/
+          ls -la release/
 
+      # Step 3 — Create or reuse the per-PR channel (idempotent on re-runs).
+      - name: Create or reuse per-PR channel
+        id: channel
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          EXISTING=$(replicated channel ls --app "${APP_SLUG}" --output json \
+            | jq -r --arg n "$SLUG" '.[] | select(.name == $n) | .id // empty')
+          if [ -n "$EXISTING" ]; then
+            CHANNEL_ID="$EXISTING"
+            echo "Reusing existing channel ${SLUG} (ID: ${CHANNEL_ID})"
+          else
+            CHANNEL_JSON=$(replicated channel create \
+              --name "$SLUG" \
+              --app "${APP_SLUG}" \
+              --output json)
+            CHANNEL_ID=$(echo "$CHANNEL_JSON" | jq -r '.channel.id // .id // empty')
+            if [ -z "$CHANNEL_ID" ]; then
+              CHANNEL_ID=$(replicated channel ls --app "${APP_SLUG}" --output json \
+                | jq -r --arg n "$SLUG" '.[] | select(.name == $n) | .id')
+            fi
+            echo "Channel created: ${SLUG} (ID: ${CHANNEL_ID})"
+          fi
+          echo "id=${CHANNEL_ID}" >> "$GITHUB_OUTPUT"
+
+      # Step 4 — Create release from packaged tgz and promote to per-PR channel.
+      - name: Create and promote release
+        id: release
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
+        run: |
+          RELEASE_JSON=$(replicated release create \
+            --yaml-dir release/ \
+            --promote "$SLUG" \
+            --version "$CHART_VERSION" \
+            --app "${APP_SLUG}" \
+            --output json)
+          SEQ=$(echo "$RELEASE_JSON" | jq -r '.sequence // .release.sequence // empty')
+          echo "sequence=${SEQ}" >> "$GITHUB_OUTPUT"
+          echo "Release sequence: ${SEQ} (version ${CHART_VERSION}) promoted to ${SLUG}"
+
+      # Step 5 — Create or reuse a trial customer licensed to this channel.
+      - name: Create or reuse trial customer
+        id: customer
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          CUSTOMER_NAME="pr-${SLUG}"
+          EXISTING=$(replicated customer ls --app "${APP_SLUG}" --output json \
+            | jq -r --arg n "$CUSTOMER_NAME" '.[] | select(.name == $n) | .installationId // empty')
+          if [ -n "$EXISTING" ]; then
+            LICENSE_ID="$EXISTING"
+            echo "Reusing existing customer ${CUSTOMER_NAME}"
+          else
+            CUSTOMER_JSON=$(replicated customer create \
+              --name "$CUSTOMER_NAME" \
+              --email "pr+${SLUG}@replicated.com" \
+              --channel "$SLUG" \
+              --type trial \
+              --expires-in 24h \
+              --app "${APP_SLUG}" \
+              --output json)
+            LICENSE_ID=$(echo "$CUSTOMER_JSON" | jq -r '.installationId // .customer.installationId // empty')
+            if [ -z "$LICENSE_ID" ] || [ "$LICENSE_ID" = "null" ]; then
+              LICENSE_ID=$(replicated customer ls --app "${APP_SLUG}" --output json \
+                | jq -r --arg n "$CUSTOMER_NAME" '.[] | select(.name == $n) | .installationId')
+            fi
+            echo "Customer created: ${CUSTOMER_NAME}"
+          fi
+          if [ -z "$LICENSE_ID" ] || [ "$LICENSE_ID" = "null" ]; then
+            echo "ERROR: could not resolve licenseID for ${CUSTOMER_NAME}"
+            exit 1
+          fi
+          # License ID is a secret — mask it in logs.
+          echo "::add-mask::${LICENSE_ID}"
+          echo "license_id=${LICENSE_ID}" >> "$GITHUB_OUTPUT"
+
+      # Step 6 — Provision a fresh CMX k3s cluster per run (not shared).
       - name: Provision CMX k3s cluster
         id: cluster
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          CLUSTER_OUTPUT=$(replicated cluster create \
+          CLUSTER_NAME="pr-${SLUG}-${RUN_ID}"
+          # CMX name cap is 63 chars; trim defensively.
+          CLUSTER_NAME="${CLUSTER_NAME:0:63}"
+          CLUSTER_JSON=$(replicated cluster create \
             --distribution k3s \
-            --version "${{ env.K3S_VERSION }}" \
-            --name "pr-${{ github.event.pull_request.number }}" \
+            --version "${K3S_VERSION}" \
+            --name "$CLUSTER_NAME" \
             --ttl 1h \
             --wait 10m \
-            --app "${{ env.APP_SLUG }}")
-          CLUSTER_ID=$(echo "$CLUSTER_OUTPUT" | awk 'NR==2 {print $1}')
+            --app "${APP_SLUG}" \
+            --output json)
+          CLUSTER_ID=$(echo "$CLUSTER_JSON" | jq -r '.id // .cluster.id // empty')
           echo "id=${CLUSTER_ID}" >> "$GITHUB_OUTPUT"
-          echo "Cluster provisioned: ${CLUSTER_ID}"
+          echo "name=${CLUSTER_NAME}" >> "$GITHUB_OUTPUT"
+          echo "Cluster provisioned: ${CLUSTER_NAME} (ID: ${CLUSTER_ID})"
+
+      # Cost observability (AC 9). Best-effort: don't fail the job if the
+      # subcommand name changes across CLI versions.
+      - name: Print cluster cost
+        if: steps.cluster.outputs.id != ''
+        env:
+          CLUSTER_ID: ${{ steps.cluster.outputs.id }}
+        run: |
+          replicated cluster inspect "$CLUSTER_ID" --app "${APP_SLUG}" || true
 
       - name: Export kubeconfig
+        env:
+          CLUSTER_ID: ${{ steps.cluster.outputs.id }}
         run: |
-          replicated cluster kubeconfig "${{ steps.cluster.outputs.id }}" \
-            --app "${{ env.APP_SLUG }}" \
+          replicated cluster kubeconfig "$CLUSTER_ID" \
+            --app "${APP_SLUG}" \
             --output-path "${{ runner.temp }}/kubeconfig.yaml"
           echo "KUBECONFIG=${{ runner.temp }}/kubeconfig.yaml" >> "$GITHUB_ENV"
 
       - name: Verify cluster access
         run: kubectl cluster-info
 
-      - name: Install CNPG operator
+      # Step 7 — Install the chart as a customer would: log in to
+      # registry.replicated.com with licenseID as both username and password,
+      # then `helm install` from the OCI URL. NO --set overrides — the chart
+      # defaults (Replicated SDK enabled, proxy.xyyzx.net images, injected
+      # dockerconfigjson) are what this job is designed to exercise.
+      - name: Helm registry login (registry.replicated.com)
+        env:
+          LICENSE_ID: ${{ steps.customer.outputs.license_id }}
         run: |
-          helm dependency update chart/
-          cd chart/charts && for f in cloudnative-pg*.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
-          helm install cnpg-operator chart/charts/cloudnative-pg \
-            --namespace cnpg-system --create-namespace \
-            --wait --timeout 3m
+          echo "$LICENSE_ID" \
+            | helm registry login registry.replicated.com \
+              --username "$LICENSE_ID" \
+              --password-stdin
 
-      - name: Create namespace and prerequisites
-        run: |
-          NAMESPACE=groovelab
-          kubectl create namespace "$NAMESPACE"
-
-          # CNPG credentials
-          # Label + annotate the Secret with Helm ownership metadata so
-          # the subsequent `helm install groovelab` step adopts this
-          # pre-applied Secret instead of failing with:
-          #   "invalid ownership metadata; missing key
-          #    \"app.kubernetes.io/managed-by\": must be set to \"Helm\""
-          # The CNPG Cluster bootstrap (below) requires this Secret to
-          # exist before `helm install` runs, so we pre-apply it and tag
-          # it for Helm adoption. See GRO-ln26 / GRO-kr54.
-          kubectl apply -f - <<EOF
-          apiVersion: v1
-          kind: Secret
-          metadata:
-            name: groovelab-cnpg-credentials
-            namespace: ${NAMESPACE}
-            labels:
-              app.kubernetes.io/managed-by: Helm
-            annotations:
-              meta.helm.sh/release-name: groovelab
-              meta.helm.sh/release-namespace: groovelab
-          type: kubernetes.io/basic-auth
-          stringData:
-            username: groovelab
-            password: ci-test-password
-          EOF
-
-          # CNPG Cluster
-          # Same Helm-adoption metadata as the Secret above. The chart
-          # also renders a CNPG Cluster named `groovelab-postgresql` (see
-          # chart/templates/postgresql/cluster.yaml, gated on
-          # .Values.cnpg.createCluster which defaults to true). Pre-apply
-          # it here so `kubectl wait --for=condition=Ready` can gate the
-          # install on a healthy DB, then let `helm install` adopt it.
-          kubectl apply -f - <<EOF
-          apiVersion: postgresql.cnpg.io/v1
-          kind: Cluster
-          metadata:
-            name: groovelab-postgresql
-            namespace: ${NAMESPACE}
-            labels:
-              app.kubernetes.io/managed-by: Helm
-            annotations:
-              meta.helm.sh/release-name: groovelab
-              meta.helm.sh/release-namespace: groovelab
-          spec:
-            instances: 1
-            bootstrap:
-              initdb:
-                database: groovelab
-                owner: groovelab
-                secret:
-                  name: groovelab-cnpg-credentials
-            storage:
-              size: 1Gi
-          EOF
-
-          echo "Waiting for CNPG Cluster to become ready..."
-          kubectl wait --for=condition=Ready cluster/groovelab-postgresql \
-            -n "${NAMESPACE}" --timeout=5m
-
-          # ExternalName service alias
-          kubectl apply -f - <<EOF
-          apiVersion: v1
-          kind: Service
-          metadata:
-            name: groovelab-postgresql
-            namespace: ${NAMESPACE}
-          spec:
-            type: ExternalName
-            externalName: groovelab-postgresql-rw.${NAMESPACE}.svc.cluster.local
-            ports:
-              - port: 5432
-                targetPort: 5432
-          EOF
-
-          # GHCR imagePullSecret
-          kubectl create secret docker-registry ghcr-credentials \
-            --docker-server=ghcr.io \
-            --docker-username="${{ github.actor }}" \
-            --docker-password="${{ secrets.GITHUB_TOKEN }}" \
-            --namespace "$NAMESPACE"
-
-      - name: Helm install groovelab
+      - name: Helm install via OCI
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
         run: |
           NAMESPACE=groovelab
-          # Extract all subchart tarballs (Helm v4 requirement)
-          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true; done && cd ../..
+          echo "[$(date +%H:%M:%S)] Installing oci://registry.replicated.com/${APP_SLUG}/${SLUG}/groovelab @ ${CHART_VERSION}"
+          helm install groovelab \
+            "oci://registry.replicated.com/${APP_SLUG}/${SLUG}/groovelab" \
+            --version "$CHART_VERSION" \
+            --namespace "$NAMESPACE" --create-namespace \
+            --wait --timeout 6m
 
-          helm install groovelab chart/ \
-            --namespace "$NAMESPACE" \
-            --set image.frontend.repository="${{ env.GHCR_PREFIX }}/groovelab-frontend" \
-            --set image.frontend.tag="${{ env.IMAGE_TAG }}" \
-            --set image.backend.repository="${{ env.GHCR_PREFIX }}/groovelab-backend" \
-            --set image.backend.tag="${{ env.IMAGE_TAG }}" \
-            --set 'global.imagePullSecrets[0].name=ghcr-credentials' \
-            --set global.replicated.dockerconfigjson=null \
-            --set cert-manager.enabled=false \
-            --set cloudnative-pg.enabled=false \
-            --set replicated.enabled=false
-
+      # Step 8 — Smoke tests against the customer-grade install.
       - name: Wait for pods to be ready
         run: |
           NAMESPACE=groovelab
@@ -328,14 +395,14 @@ jobs:
             [ -z "$NOT_READY" ] && break
             if [ "$(date +%s)" -ge "$DEADLINE" ]; then
               echo "TIMEOUT: pods not ready after 5 minutes"
-              kubectl describe pods -n "$NAMESPACE" 2>/dev/null | tail -60
+              kubectl describe pods -n "$NAMESPACE" 2>/dev/null | tail -80
               exit 1
             fi
             sleep 15
           done
           echo "All pods running."
 
-      - name: Verify /healthz returns 200
+      - name: Smoke test — /healthz 200 and session contract 404
         run: |
           NAMESPACE=groovelab
           kubectl port-forward svc/groovelab-backend 18080:8080 -n "$NAMESPACE" &
@@ -343,28 +410,73 @@ jobs:
           sleep 5
 
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18080/healthz)
-          kill "$PF_PID" 2>/dev/null || true
-
           if [ "$HTTP_CODE" != "200" ]; then
+            kill "$PF_PID" 2>/dev/null || true
             echo "FAIL: /healthz returned HTTP ${HTTP_CODE}, expected 200"
             exit 1
           fi
           echo "PASS: /healthz returned HTTP 200"
 
+          ANSWER_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST -H 'Content-Type: application/json' -d '{}' \
+            http://localhost:18080/api/v1/flashcards/answer)
+          kill "$PF_PID" 2>/dev/null || true
+          if [ "$ANSWER_CODE" != "404" ]; then
+            echo "FAIL: POST /api/v1/flashcards/answer returned HTTP ${ANSWER_CODE}, expected 404"
+            exit 1
+          fi
+          echo "PASS: POST /api/v1/flashcards/answer returned HTTP 404 (no session)"
+
+      # Step 9 — Upgrade test: publish a second release on the same channel,
+      # upgrade the install in place, re-run smoke tests.
+      - name: Upgrade test — package + release + helm upgrade
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          NAMESPACE=groovelab
+          UPGRADE_VERSION="0.0.0-pr${PR_NUMBER}.1"
+          rm -f release/groovelab-*.tgz
+          helm package chart/ \
+            --version "$UPGRADE_VERSION" \
+            --app-version "pr-${SLUG}-upgrade" \
+            --destination /tmp/
+          mv "/tmp/groovelab-${UPGRADE_VERSION}.tgz" release/
+
+          replicated release create \
+            --yaml-dir release/ \
+            --promote "$SLUG" \
+            --version "$UPGRADE_VERSION" \
+            --app "${APP_SLUG}" \
+            --output json
+
+          helm upgrade groovelab \
+            "oci://registry.replicated.com/${APP_SLUG}/${SLUG}/groovelab" \
+            --version "$UPGRADE_VERSION" \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 6m
+
+          echo "Re-running smoke tests after upgrade..."
+          kubectl port-forward svc/groovelab-backend 18081:8080 -n "$NAMESPACE" &
+          PF_PID=$!
+          sleep 5
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18081/healthz)
+          kill "$PF_PID" 2>/dev/null || true
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "FAIL (post-upgrade): /healthz returned HTTP ${HTTP_CODE}"
+            exit 1
+          fi
+          echo "PASS: post-upgrade /healthz returned 200"
+
+      # Step 10 — Cleanup. Cluster is removed eagerly (1h TTL is a safety net).
+      # Channel/customer teardown happens in pr-cleanup.yaml on PR close so
+      # re-runs of the same PR reuse them idempotently during iteration.
       - name: Tear down CMX cluster
         if: always()
+        env:
+          CLUSTER_ID: ${{ steps.cluster.outputs.id }}
         run: |
-          if [ -n "${{ steps.cluster.outputs.id }}" ]; then
-            replicated cluster rm "${{ steps.cluster.outputs.id }}" \
-              --app "${{ env.APP_SLUG }}" || true
+          if [ -n "$CLUSTER_ID" ]; then
+            replicated cluster rm "$CLUSTER_ID" --app "${APP_SLUG}" || true
             echo "Cluster removal requested."
-          fi
-
-      - name: Archive temporary channel
-        if: always()
-        run: |
-          if [ -n "${{ steps.channel.outputs.id }}" ]; then
-            replicated channel rm "${{ steps.channel.outputs.id }}" \
-              --app "${{ env.APP_SLUG }}" || true
-            echo "Channel archived."
           fi
