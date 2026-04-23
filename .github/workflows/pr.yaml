@@ -449,27 +449,32 @@ jobs:
               --username "$LICENSE_ID" \
               --password-stdin
 
-      # Replicated OCI registry may lag a few seconds behind release promote
-      # (the chart is packaged + promoted + then becomes OCI-fetchable). Poll
-      # with `helm show chart` until the new version is visible so helmfile's
-      # subsequent `helm pull` does not 404 on a freshly promoted chart.
+      # Replicated OCI registry may lag behind `replicated release create
+      # --promote` (the chart is packaged, promoted, and THEN becomes
+      # OCI-fetchable through the customer license). Use `helm pull` as the
+      # probe because it mirrors exactly what helmfile's subsequent
+      # `helm pull` invocation does (auth, path, registry negotiation) —
+      # `helm show chart` sometimes 404s where `helm pull` would succeed.
       - name: Wait for OCI chart to be fetchable
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
           CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
         run: |
           CHART_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/groovelab"
-          echo "[$(date +%H:%M:%S)] polling ${CHART_URL}:${CHART_VERSION}"
+          DEST=$(mktemp -d)
+          echo "[$(date +%H:%M:%S)] polling ${CHART_URL} @ ${CHART_VERSION}"
           for i in $(seq 1 18); do
-            if helm show chart "$CHART_URL" --version "$CHART_VERSION" >/dev/null 2>&1; then
-              echo "[$(date +%H:%M:%S)] chart available after ${i} attempt(s)"
+            if helm pull "$CHART_URL" --version "$CHART_VERSION" --destination "$DEST" 2>/tmp/helm-pull.err; then
+              echo "[$(date +%H:%M:%S)] chart fetchable after ${i} attempt(s): $(ls "$DEST")"
+              rm -rf "$DEST"
               exit 0
             fi
-            echo "[$(date +%H:%M:%S)] attempt ${i}: not yet available; sleeping 10s"
+            echo "[$(date +%H:%M:%S)] attempt ${i}: helm pull not yet available"
+            tail -3 /tmp/helm-pull.err 2>/dev/null || true
             sleep 10
           done
           echo "ERROR: chart ${CHART_URL}:${CHART_VERSION} never became fetchable"
-          helm show chart "$CHART_URL" --version "$CHART_VERSION" || true
+          cat /tmp/helm-pull.err 2>/dev/null || true
           exit 1
 
       # helmfile apply against the 'replicated' environment installs CNPG
