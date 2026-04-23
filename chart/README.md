@@ -155,6 +155,90 @@ implicit `helm dep update` side effect. The migration work:
 Until that work is done, the chart resolves cert-manager to the 1.19.x line on
 every release rebuild, and in-place upgrades on 1.19.x clusters keep working.
 
+## Replicated-enabled by default
+
+`chart/values.yaml` ships with `replicated.enabled: true` as the default, and
+image repositories default to the Replicated proxy registry
+(`proxy.xyyzx.net/proxy/adamancini/groovelab/...`). This is the invariant:
+
+- **Default state** (every Replicated-managed install — KOTS, Embedded Cluster,
+  customer Helm install via `oci://registry.replicated.com/library/...`):
+  `replicated.enabled=true`. The Replicated SDK subchart installs, images pull
+  from `proxy.xyyzx.net/proxy/...`, and the license-scoped pull secret
+  `enterprise-pull-secret` (materialized from
+  `global.replicated.dockerconfigjson`) is required for image pull. This is
+  the customer-grade posture and the only path that exercises licensing,
+  telemetry, preflights, and the full Replicated integration surface.
+
+- **Local-dev override** (Tilt / helmfile loops against kind/minikube / bespoke
+  developer clusters): use the `replicatedEnabled: false` profile in
+  `helmfile.yaml.gotmpl`, or pass `--set replicated.enabled=false --set
+  image.<side>.repository=ghcr.io/adamancini/groovelab-<side>` for a one-off
+  `helm install`. This path skips the SDK subchart and pulls images directly
+  from GHCR (no license required).
+
+- **Never flip `replicated.enabled=false` as a default in `values.yaml`.** The
+  default must stay `true` so every Replicated-managed install — and the
+  customer-grade install-test in `.github/workflows/pr.yaml` — exercises the
+  real production path.
+
+### CI install-test carve-out
+
+`.github/workflows/release.yaml`'s `release-unstable` job runs a smoke install
+on an ephemeral CMX k3s cluster after every `v*` tag. That cluster is
+unlicensed (it is not a customer install; it is a CI-internal smoke harness),
+so it cannot pull from the Replicated proxy registry and the SDK subchart
+cannot acquire its license secret. To keep CI green, the install and upgrade
+steps in that workflow pass:
+
+```
+--set image.<side>.repository=ghcr.io/adamancini/groovelab-<side>  # direct GHCR pull
+--set global.imagePullSecrets[0].name=ghcr-credentials             # GITHUB_TOKEN-backed
+--set global.replicated.dockerconfigjson=null                      # suppress proxy pull secret
+--set replicated.enabled=false                                     # skip SDK subchart
+```
+
+This is the explicit, documented exception. The **customer-grade** install
+coverage — which exercises `replicated.enabled=true`, the proxy registry, and
+the license-scoped pull secret end-to-end — lives in
+`.github/workflows/pr.yaml` (see GRO-lcva). Do not mirror the
+`replicated.enabled=false` overrides into any other install path without
+adding a comparable inline comment justifying why.
+
+## KOTS manifests live in `release/`, not `chart/templates/`
+
+KOTS custom resources (`kots.io/v1beta1 Application`, `kots.io/v1beta2 HelmChart`,
+`kots.io/v1beta1 Config`, `embeddedcluster.replicated.com/v1beta1 Config`, etc.)
+are **not Kubernetes CRDs** — they are never installed into the target cluster.
+They are consumed only by the Replicated Vendor Portal at release-creation time
+and by the KOTS Admin Console at install time. They must therefore live in
+`release/`, which is the directory `replicated release create --yaml-dir` reads.
+
+Putting them in `chart/templates/` breaks `helm install` on plain Kubernetes
+(non-KOTS, non-EC) clusters — including the per-PR customer install test in
+`.github/workflows/pr.yaml` — with `resource mapping not found for kind
+"Application"` / `"HelmChart"` errors, because the kinds are unknown to the
+target cluster's API server.
+
+Current split:
+
+| File                                         | Purpose                                | Lives in       |
+|----------------------------------------------|----------------------------------------|----------------|
+| `release/application.yaml`                   | KOTS Application CR                    | `release/`     |
+| `release/helmchart.yaml`                     | KOTS HelmChart CR                      | `release/`     |
+| `release/embedded-cluster-config.yaml`       | Embedded Cluster Config CR             | `release/`     |
+| `chart/templates/preflight.yaml`             | Secret wrapping a `Preflight` spec     | `chart/`       |
+| `chart/templates/support-bundle.yaml`        | Secret wrapping a `SupportBundle` spec | `chart/`       |
+
+`chart/templates/preflight.yaml` and `chart/templates/support-bundle.yaml` are
+legitimate chart templates: they render `kind: Secret` objects with the
+`troubleshoot.sh/kind` label, which kotsadm and the `troubleshoot` CLI discover
+at runtime. Those ARE cluster resources. This matches the pattern used in
+`replicatedhq/platform-examples` (wg-easy, storagebox, onlineboutique, flipt).
+The bare `troubleshoot.sh/v1beta2 Preflight` / `SupportBundle` manifests
+(without the Secret wrapper) belong in `release/` — groovelab does not ship
+those, only the in-cluster Secret-wrapped variants.
+
 ## Related files
 
 - `.github/workflows/release.yaml` — tag-driven release workflow; rewrites
