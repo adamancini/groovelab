@@ -387,11 +387,37 @@ jobs:
       - name: Verify cluster access
         run: kubectl cluster-info
 
-      # Step 7 — Install the chart as a customer would: log in to
-      # registry.replicated.com with licenseID as both username and password,
-      # then `helm install` from the OCI URL. NO --set overrides — the chart
-      # defaults (Replicated SDK enabled, proxy.xyyzx.net images, injected
-      # dockerconfigjson) are what this job is designed to exercise.
+      # Step 7 — Install the chart as a customer would, driven by helmfile.
+      #
+      # Why helmfile (GRO-s3mc): the groovelab chart renders a
+      # postgresql.cnpg.io/v1 Cluster CR from the cloudnative-pg subchart's
+      # CRD. CNPG ships its CRDs in the subchart's templates/crds/
+      # directory (NOT in crds/), so a single 'helm install' races the CRD
+      # install against the parent Cluster CR and fails with
+      # 'no matches for kind "Cluster" in version "postgresql.cnpg.io/v1"'.
+      # Helmfile sequences CNPG as a separate release with needs: wiring
+      # (see helmfile.yaml.gotmpl's replicated environment), guaranteeing
+      # the CRDs are Established before the groovelab release is applied.
+      # Reference pattern: replicatedhq/platform-examples
+      # /patterns/multi-chart-orchestration.
+      #
+      # Helmfile needs the helm-diff plugin; install both on top of the
+      # azure/setup-helm@v4 helm already in PATH.
+      - name: Install helmfile and helm-diff plugin
+        env:
+          HELMFILE_VERSION: "1.4.4"
+        run: |
+          # helm-diff is a helmfile apply dependency.
+          helm plugin install https://github.com/databus23/helm-diff --version v3.9.10 || true
+          curl -fsSL \
+            "https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION}_linux_amd64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin/ helmfile
+          helmfile --version
+          helm plugin list
+
+      # Log in to registry.replicated.com so helmfile can pull the groovelab
+      # chart from the Replicated OCI registry. License ID is the username
+      # AND password per Replicated docs.
       - name: Helm registry login (registry.replicated.com)
         env:
           LICENSE_ID: ${{ steps.customer.outputs.license_id }}
@@ -401,18 +427,31 @@ jobs:
               --username "$LICENSE_ID" \
               --password-stdin
 
-      - name: Helm install via OCI
+      # helmfile apply against the 'replicated' environment installs CNPG
+      # operator first (release 'cnpg' in cnpg-system), waits for it to be
+      # Ready, then installs groovelab from the OCI URL. The CRD-check hook
+      # in chart/templates/crd-check-job.yaml provides a second line of
+      # defense inside the groovelab release itself.
+      #
+      # NO --set overrides — the chart defaults (Replicated SDK enabled,
+      # proxy.xyyzx.net images, injected dockerconfigjson) are exactly what
+      # this job is designed to exercise.
+      - name: Helmfile apply (CNPG first, then groovelab)
         env:
-          SLUG: ${{ steps.slug.outputs.slug }}
+          LICENSE_ID: ${{ steps.customer.outputs.license_id }}
+          REPLICATED_APP: ${{ env.APP_SLUG }}
+          CHANNEL: ${{ steps.slug.outputs.slug }}
           CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
         run: |
-          NAMESPACE=groovelab
-          echo "[$(date +%H:%M:%S)] Installing oci://registry.replicated.com/${APP_SLUG}/${SLUG}/groovelab @ ${CHART_VERSION}"
-          helm install groovelab \
-            "oci://registry.replicated.com/${APP_SLUG}/${SLUG}/groovelab" \
-            --version "$CHART_VERSION" \
-            --namespace "$NAMESPACE" --create-namespace \
-            --wait --timeout 6m
+          echo "[$(date +%H:%M:%S)] helmfile apply -e replicated (CNPG -> groovelab)"
+          helmfile -e replicated apply --wait --include-transitive-needs
+
+          echo "[$(date +%H:%M:%S)] helmfile releases:"
+          helmfile -e replicated list
+
+          echo "[$(date +%H:%M:%S)] CNPG CRD status:"
+          kubectl get crd clusters.postgresql.cnpg.io \
+            -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' && echo
 
       # Step 8 — Smoke tests against the customer-grade install.
       - name: Wait for pods to be ready

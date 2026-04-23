@@ -83,6 +83,37 @@ airgap:
   networkPolicy:
     enabled: false
 
+# crdCheck: pre-install/pre-upgrade Helm hook that blocks chart reconciliation
+# until the CRDs groovelab's templates depend on are Established. Belt-and-
+# suspenders for install paths where subchart CRDs race with parent CRs. See
+# chart/templates/crd-check-job.yaml and chart/README.md "CRD-check hook".
+#
+# Image choice: alpine/k8s (non-Bitnami, multi-arch). The project CLAUDE.md
+# bans Bitnami images; the platform-examples reference pattern at
+# replicatedhq/platform-examples/patterns/multi-chart-orchestration uses
+# bitnami/kubectl — we deliberately do not.
+crdCheck:
+  enabled: true
+  image:
+    repository: alpine/k8s
+    tag: "1.32.3"
+    pullPolicy: IfNotPresent
+  # CRDs to wait on. Default list matches the CRDs groovelab's templates
+  # reference directly. Additional entries may be appended by downstream
+  # installs (e.g. cert-manager's certificates.cert-manager.io if a consumer
+  # pulls the CR into the chart).
+  crds:
+    - name: clusters.postgresql.cnpg.io
+  timeout: 60
+  backoffLimit: 2
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
 features:
   trackExport:
     # enabled is controlled by the track_export_enabled license entitlement field.

@@ -1,0 +1,64 @@
+{{- /*
+  RBAC for the crd-check hook Job. The Job needs to `get` CRDs cluster-wide
+  (apiextensions.k8s.io/CustomResourceDefinition is a cluster-scoped resource,
+  so a namespaced Role would not suffice). Access is read-only and scoped to
+  CRDs only.
+
+  Lifecycle matches the Job (pre-install,pre-upgrade + hook-succeeded cleanup)
+  so the SA/ClusterRole(Binding) are created, used, then removed alongside the
+  Job on a successful run.
+*/ -}}
+{{- if .Values.crdCheck.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "groovelab.fullname" . }}-crd-check
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-check
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "groovelab.fullname" . }}-crd-check
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-check
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  - apiGroups:
+      - apiextensions.k8s.io
+    resources:
+      - customresourcedefinitions
+    verbs:
+      - get
+      - list
+      - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "groovelab.fullname" . }}-crd-check
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-check
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "groovelab.fullname" . }}-crd-check
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "groovelab.fullname" . }}-crd-check
+    namespace: {{ .Release.Namespace }}
+{{- end }}

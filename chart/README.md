@@ -239,11 +239,97 @@ The bare `troubleshoot.sh/v1beta2 Preflight` / `SupportBundle` manifests
 (without the Secret wrapper) belong in `release/` — groovelab does not ship
 those, only the in-cluster Secret-wrapped variants.
 
+## CRD-check hook
+
+This chart renders a `postgresql.cnpg.io/v1 Cluster` CR (see
+`chart/templates/postgresql/cluster.yaml`) whose CRD ships with the bundled
+`cloudnative-pg` subchart. The subchart keeps its CRD manifest in
+`templates/crds/` (not the special `crds/` directory Helm installs before
+templates), so on a single `helm install` the parent `Cluster` CR races with
+the subchart's CRD install and fails with:
+
+```
+resource mapping not found for name: "groovelab-postgresql"
+namespace: "" from "": no matches for kind "Cluster"
+in version "postgresql.cnpg.io/v1"
+ensure CRDs are installed first
+```
+
+Two-layer fix:
+
+1. **Primary fix — install CNPG first.** In every non-KOTS install path (CI
+   per-PR test, local helmfile developer loop, any customer who runs plain
+   Helm) install the CNPG operator as its own release BEFORE the groovelab
+   chart. `helmfile.yaml.gotmpl` in the repo root models this: the `cnpg`
+   release is applied first with `wait: true`; the `groovelab` release has
+   `needs: [cnpg-system/cnpg]`. KOTS handles this natively through
+   `spec.weight` on each `HelmChart` CR; Embedded Cluster follows the same
+   weights.
+
+2. **Belt-and-suspenders — `crdCheck` Helm hook.** The chart ships a
+   `pre-install,pre-upgrade` Job at `chart/templates/crd-check-job.yaml`
+   (plus a ServiceAccount, ClusterRole, and ClusterRoleBinding in
+   `chart/templates/crd-check-rbac.yaml`) that blocks the release until each
+   CRD in `.Values.crdCheck.crds` reaches the `Established` condition. When
+   CNPG is already installed first, the hook finishes in roughly a second.
+   When the ordering is wrong or the CNPG operator is slow, the hook gives a
+   clear timeout message instead of a cryptic `resource mapping not found`
+   during template reconciliation.
+
+Values:
+
+```yaml
+crdCheck:
+  enabled: true               # disable on airgap installs that pre-install CRDs out of band
+  image:
+    repository: alpine/k8s    # non-Bitnami, multi-arch, kubectl + /bin/sh
+    tag: "1.32.3"
+  crds:
+    - name: clusters.postgresql.cnpg.io
+  timeout: 60
+```
+
+The reference pattern that this hook is modelled on lives at
+[`replicatedhq/platform-examples/patterns/multi-chart-orchestration`](https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration).
+That example uses `bitnami/kubectl` for the check image; this chart ships
+`alpine/k8s` instead because the project bans Bitnami images (see the
+repo-root `CLAUDE.md` Non-Negotiables). `alpine/k8s` is purpose-built for
+this use case (kubectl + a POSIX shell in a small multi-arch image).
+
+## Installing on plain Helm
+
+The chart assumes CNPG CRDs are available at install time. Install the
+bundled CNPG subchart first, then the groovelab chart, either via helmfile
+(recommended) or by issuing two helm commands:
+
+```bash
+# Option A: helmfile (matches the CI per-PR install path exactly).
+helmfile -e replicated apply --wait --include-transitive-needs
+
+# Option B: two sequential helm commands.
+helm install cloudnative-pg ./chart/charts/cloudnative-pg \
+  --namespace cnpg-system --create-namespace \
+  --wait --timeout 5m
+kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=60s
+helm install groovelab ./chart \
+  --namespace groovelab --create-namespace \
+  --wait --timeout 6m
+```
+
+Replicated / KOTS / Embedded Cluster installs handle the ordering through
+HelmChart weights — there is nothing extra to do there.
+
 ## Related files
 
 - `.github/workflows/release.yaml` — tag-driven release workflow; rewrites
   Chart.yaml before `replicated release create`.
+- `.github/workflows/pr.yaml` — per-PR customer-grade install test; invokes
+  `helmfile -e replicated apply` to stage CNPG before the groovelab chart.
+- `helmfile.yaml.gotmpl` — source of truth for multi-release ordering (CNPG
+  operator first, groovelab second). Used by both CI and local dev loops.
 - `chart/templates/{frontend,backend}/deployment.yaml` — image reference
   resolution logic.
+- `chart/templates/crd-check-job.yaml` and `chart/templates/crd-check-rbac.yaml`
+  — CRD-check Helm hook + its RBAC.
 - `chart/values.yaml` — empty `tag:` fields; `repository:` defaults to the
   Replicated proxy registry for KOTS/EC installs.
