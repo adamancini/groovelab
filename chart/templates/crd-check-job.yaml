@@ -1,0 +1,92 @@
+{{- /*
+  CRD-check Helm hook — belt-and-suspenders guard that required CRDs are
+  Established before the rest of the groovelab chart's custom resources are
+  reconciled.
+
+  This is adapted from replicatedhq/platform-examples
+  (https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration).
+  The reference pattern uses `bitnami/kubectl` for the check image; this chart
+  ships `alpine/k8s:<version>` instead because the groovelab project bans
+  Bitnami-distributed images and charts (see project CLAUDE.md
+  Non-Negotiables). `alpine/k8s` is a non-Bitnami, multi-arch image bundling
+  kubectl + a POSIX shell, which this template requires for the polling loop.
+
+  The hook is pre-install / pre-upgrade so it runs BEFORE the parent chart's
+  postgresql.cnpg.io/v1 Cluster CR is reconciled (Helm blocks on hook success
+  before applying the rest of the release). This makes the chart safe on any
+  install path where CNPG CRDs may land in the same window as groovelab's CRs
+  (for example, a single `helm install` against a cluster without the
+  cloudnative-pg subchart pre-installed, or a KOTS install where the
+  HelmChart weights differ from expectation).
+
+  When CNPG is installed as a separate release first (the helmfile-driven
+  CI path — see .github/workflows/pr.yaml), the CRD is already Established
+  and the Job exits within a second.
+*/ -}}
+{{- if .Values.crdCheck.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "groovelab.fullname" . }}-crd-check
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: crd-check
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: {{ .Values.crdCheck.backoffLimit | default 2 }}
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels:
+        {{- include "groovelab.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: crd-check
+    spec:
+      serviceAccountName: {{ include "groovelab.fullname" . }}-crd-check
+      restartPolicy: OnFailure
+      {{- include "groovelab.imagePullSecrets" . | nindent 6 }}
+      containers:
+        - name: crd-check
+          image: "{{ .Values.crdCheck.image.repository }}:{{ .Values.crdCheck.image.tag }}"
+          imagePullPolicy: {{ .Values.crdCheck.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              TIMEOUT={{ .Values.crdCheck.timeout | default 60 }}
+              CRDS="{{- range $i, $c := .Values.crdCheck.crds }}{{- if $i }} {{ end }}{{ $c.name }}{{- end }}"
+              START=$(date +%s)
+              for CRD in $CRDS; do
+                echo "[crd-check] waiting for CRD $CRD to be Established (timeout ${TIMEOUT}s)"
+                while true; do
+                  STATUS=$(kubectl get crd "$CRD" \
+                    -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' \
+                    2>/dev/null || echo "")
+                  if [ "$STATUS" = "True" ]; then
+                    echo "[crd-check] CRD $CRD Established"
+                    break
+                  fi
+                  NOW=$(date +%s)
+                  if [ $((NOW - START)) -ge "$TIMEOUT" ]; then
+                    echo "[crd-check] TIMEOUT waiting for $CRD after ${TIMEOUT}s" >&2
+                    kubectl get crd "$CRD" -o yaml 2>&1 | head -40 >&2 || true
+                    exit 1
+                  fi
+                  sleep 3
+                done
+              done
+              echo "[crd-check] all required CRDs Established"
+          resources:
+            {{- toYaml (.Values.crdCheck.resources | default dict) | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop:
+                - ALL
+{{- end }}

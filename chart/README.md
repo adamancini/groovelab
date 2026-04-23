@@ -155,11 +155,181 @@ implicit `helm dep update` side effect. The migration work:
 Until that work is done, the chart resolves cert-manager to the 1.19.x line on
 every release rebuild, and in-place upgrades on 1.19.x clusters keep working.
 
+## Replicated-enabled by default
+
+`chart/values.yaml` ships with `replicated.enabled: true` as the default, and
+image repositories default to the Replicated proxy registry
+(`proxy.xyyzx.net/proxy/adamancini/groovelab/...`). This is the invariant:
+
+- **Default state** (every Replicated-managed install — KOTS, Embedded Cluster,
+  customer Helm install via `oci://registry.replicated.com/library/...`):
+  `replicated.enabled=true`. The Replicated SDK subchart installs, images pull
+  from `proxy.xyyzx.net/proxy/...`, and the license-scoped pull secret
+  `enterprise-pull-secret` (materialized from
+  `global.replicated.dockerconfigjson`) is required for image pull. This is
+  the customer-grade posture and the only path that exercises licensing,
+  telemetry, preflights, and the full Replicated integration surface.
+
+- **Local-dev override** (Tilt / helmfile loops against kind/minikube / bespoke
+  developer clusters): use the `replicatedEnabled: false` profile in
+  `helmfile.yaml.gotmpl`, or pass `--set replicated.enabled=false --set
+  image.<side>.repository=ghcr.io/adamancini/groovelab-<side>` for a one-off
+  `helm install`. This path skips the SDK subchart and pulls images directly
+  from GHCR (no license required).
+
+- **Never flip `replicated.enabled=false` as a default in `values.yaml`.** The
+  default must stay `true` so every Replicated-managed install — and the
+  customer-grade install-test in `.github/workflows/pr.yaml` — exercises the
+  real production path.
+
+### CI install-test carve-out
+
+`.github/workflows/release.yaml`'s `release-unstable` job runs a smoke install
+on an ephemeral CMX k3s cluster after every `v*` tag. That cluster is
+unlicensed (it is not a customer install; it is a CI-internal smoke harness),
+so it cannot pull from the Replicated proxy registry and the SDK subchart
+cannot acquire its license secret. To keep CI green, the install and upgrade
+steps in that workflow pass:
+
+```
+--set image.<side>.repository=ghcr.io/adamancini/groovelab-<side>  # direct GHCR pull
+--set global.imagePullSecrets[0].name=ghcr-credentials             # GITHUB_TOKEN-backed
+--set global.replicated.dockerconfigjson=null                      # suppress proxy pull secret
+--set replicated.enabled=false                                     # skip SDK subchart
+```
+
+This is the explicit, documented exception. The **customer-grade** install
+coverage — which exercises `replicated.enabled=true`, the proxy registry, and
+the license-scoped pull secret end-to-end — lives in
+`.github/workflows/pr.yaml` (see GRO-lcva). Do not mirror the
+`replicated.enabled=false` overrides into any other install path without
+adding a comparable inline comment justifying why.
+
+## KOTS manifests live in `release/`, not `chart/templates/`
+
+KOTS custom resources (`kots.io/v1beta1 Application`, `kots.io/v1beta2 HelmChart`,
+`kots.io/v1beta1 Config`, `embeddedcluster.replicated.com/v1beta1 Config`, etc.)
+are **not Kubernetes CRDs** — they are never installed into the target cluster.
+They are consumed only by the Replicated Vendor Portal at release-creation time
+and by the KOTS Admin Console at install time. They must therefore live in
+`release/`, which is the directory `replicated release create --yaml-dir` reads.
+
+Putting them in `chart/templates/` breaks `helm install` on plain Kubernetes
+(non-KOTS, non-EC) clusters — including the per-PR customer install test in
+`.github/workflows/pr.yaml` — with `resource mapping not found for kind
+"Application"` / `"HelmChart"` errors, because the kinds are unknown to the
+target cluster's API server.
+
+Current split:
+
+| File                                         | Purpose                                | Lives in       |
+|----------------------------------------------|----------------------------------------|----------------|
+| `release/application.yaml`                   | KOTS Application CR                    | `release/`     |
+| `release/helmchart.yaml`                     | KOTS HelmChart CR                      | `release/`     |
+| `release/embedded-cluster-config.yaml`       | Embedded Cluster Config CR             | `release/`     |
+| `chart/templates/preflight.yaml`             | Secret wrapping a `Preflight` spec     | `chart/`       |
+| `chart/templates/support-bundle.yaml`        | Secret wrapping a `SupportBundle` spec | `chart/`       |
+
+`chart/templates/preflight.yaml` and `chart/templates/support-bundle.yaml` are
+legitimate chart templates: they render `kind: Secret` objects with the
+`troubleshoot.sh/kind` label, which kotsadm and the `troubleshoot` CLI discover
+at runtime. Those ARE cluster resources. This matches the pattern used in
+`replicatedhq/platform-examples` (wg-easy, storagebox, onlineboutique, flipt).
+The bare `troubleshoot.sh/v1beta2 Preflight` / `SupportBundle` manifests
+(without the Secret wrapper) belong in `release/` — groovelab does not ship
+those, only the in-cluster Secret-wrapped variants.
+
+## CRD-check hook
+
+This chart renders a `postgresql.cnpg.io/v1 Cluster` CR (see
+`chart/templates/postgresql/cluster.yaml`) whose CRD ships with the bundled
+`cloudnative-pg` subchart. The subchart keeps its CRD manifest in
+`templates/crds/` (not the special `crds/` directory Helm installs before
+templates), so on a single `helm install` the parent `Cluster` CR races with
+the subchart's CRD install and fails with:
+
+```
+resource mapping not found for name: "groovelab-postgresql"
+namespace: "" from "": no matches for kind "Cluster"
+in version "postgresql.cnpg.io/v1"
+ensure CRDs are installed first
+```
+
+Two-layer fix:
+
+1. **Primary fix — install CNPG first.** In every non-KOTS install path (CI
+   per-PR test, local helmfile developer loop, any customer who runs plain
+   Helm) install the CNPG operator as its own release BEFORE the groovelab
+   chart. `helmfile.yaml.gotmpl` in the repo root models this: the `cnpg`
+   release is applied first with `wait: true`; the `groovelab` release has
+   `needs: [cnpg-system/cnpg]`. KOTS handles this natively through
+   `spec.weight` on each `HelmChart` CR; Embedded Cluster follows the same
+   weights.
+
+2. **Belt-and-suspenders — `crdCheck` Helm hook.** The chart ships a
+   `pre-install,pre-upgrade` Job at `chart/templates/crd-check-job.yaml`
+   (plus a ServiceAccount, ClusterRole, and ClusterRoleBinding in
+   `chart/templates/crd-check-rbac.yaml`) that blocks the release until each
+   CRD in `.Values.crdCheck.crds` reaches the `Established` condition. When
+   CNPG is already installed first, the hook finishes in roughly a second.
+   When the ordering is wrong or the CNPG operator is slow, the hook gives a
+   clear timeout message instead of a cryptic `resource mapping not found`
+   during template reconciliation.
+
+Values:
+
+```yaml
+crdCheck:
+  enabled: true               # disable on airgap installs that pre-install CRDs out of band
+  image:
+    repository: alpine/k8s    # non-Bitnami, multi-arch, kubectl + /bin/sh
+    tag: "1.32.3"
+  crds:
+    - name: clusters.postgresql.cnpg.io
+  timeout: 60
+```
+
+The reference pattern that this hook is modelled on lives at
+[`replicatedhq/platform-examples/patterns/multi-chart-orchestration`](https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration).
+That example uses `bitnami/kubectl` for the check image; this chart ships
+`alpine/k8s` instead because the project bans Bitnami images (see the
+repo-root `CLAUDE.md` Non-Negotiables). `alpine/k8s` is purpose-built for
+this use case (kubectl + a POSIX shell in a small multi-arch image).
+
+## Installing on plain Helm
+
+The chart assumes CNPG CRDs are available at install time. Install the
+bundled CNPG subchart first, then the groovelab chart, either via helmfile
+(recommended) or by issuing two helm commands:
+
+```bash
+# Option A: helmfile (matches the CI per-PR install path exactly).
+helmfile -e replicated apply --wait --include-transitive-needs
+
+# Option B: two sequential helm commands.
+helm install cloudnative-pg ./chart/charts/cloudnative-pg \
+  --namespace cnpg-system --create-namespace \
+  --wait --timeout 5m
+kubectl wait --for=condition=Established crd/clusters.postgresql.cnpg.io --timeout=60s
+helm install groovelab ./chart \
+  --namespace groovelab --create-namespace \
+  --wait --timeout 6m
+```
+
+Replicated / KOTS / Embedded Cluster installs handle the ordering through
+HelmChart weights — there is nothing extra to do there.
+
 ## Related files
 
 - `.github/workflows/release.yaml` — tag-driven release workflow; rewrites
   Chart.yaml before `replicated release create`.
+- `.github/workflows/pr.yaml` — per-PR customer-grade install test; invokes
+  `helmfile -e replicated apply` to stage CNPG before the groovelab chart.
+- `helmfile.yaml.gotmpl` — source of truth for multi-release ordering (CNPG
+  operator first, groovelab second). Used by both CI and local dev loops.
 - `chart/templates/{frontend,backend}/deployment.yaml` — image reference
   resolution logic.
+- `chart/templates/crd-check-job.yaml` and `chart/templates/crd-check-rbac.yaml`
+  — CRD-check Helm hook + its RBAC.
 - `chart/values.yaml` — empty `tag:` fields; `repository:` defaults to the
   Replicated proxy registry for KOTS/EC installs.

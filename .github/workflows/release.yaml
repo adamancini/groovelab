@@ -339,6 +339,19 @@ jobs:
           # is correctly wired. Only the repository is overridden here, to
           # pull directly from GHCR (the proxy registry is only reachable
           # from EC / KOTS-managed clusters, not this ephemeral CMX k3s).
+          #
+          # Replicated-by-default carve-out (GRO-m1em): this is the one
+          # sanctioned install path that flips `replicated.enabled=false`.
+          # The CMX k3s cluster is unlicensed (CI-internal smoke harness,
+          # not a customer install), so it cannot pull from the Replicated
+          # proxy registry and the SDK subchart has no license secret to
+          # consume. This smoke test exists only to prove the chart packs
+          # and installs; the CUSTOMER-GRADE install path (with
+          # replicated.enabled=true, proxy registry, enterprise-pull-secret)
+          # lives in .github/workflows/pr.yaml (GRO-lcva). Do not copy this
+          # pattern into any other install path without a matching
+          # justification comment. See chart/README.md
+          # "Replicated-enabled by default" for the full invariant.
           helm install groovelab chart/ \
             --namespace "$NAMESPACE" \
             --set image.frontend.repository="${{ env.GHCR_PREFIX }}/groovelab-frontend" \
@@ -390,6 +403,13 @@ jobs:
           # Re-run helm upgrade with same version to validate upgrade path.
           # Image tags intentionally NOT overridden -- same reasoning as the
           # install step above (.Chart.AppVersion is the source of truth).
+          #
+          # Replicated-by-default carve-out (GRO-m1em): same as the install
+          # step above, this upgrade runs on an unlicensed CMX k3s cluster
+          # and therefore flips `replicated.enabled=false` to skip the SDK
+          # subchart. Customer-grade upgrade coverage (replicated.enabled=true
+          # end-to-end) is the PR workflow's responsibility (GRO-lcva). See
+          # chart/README.md "Replicated-enabled by default" for the invariant.
           helm upgrade groovelab chart/ \
             --namespace "$NAMESPACE" \
             --set image.frontend.repository="${{ env.GHCR_PREFIX }}/groovelab-frontend" \
