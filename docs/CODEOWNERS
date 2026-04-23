@@ -1,0 +1,11 @@
+# CODEOWNERS — groovelab
+#
+# GitHub reads this file to auto-request reviews on PRs and enforce
+# CODEOWNERS-based branch protection rules. See:
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# GitHub searches (in order): .github/CODEOWNERS, /CODEOWNERS, docs/CODEOWNERS.
+# This file lives in docs/ per repo convention.
+
+# Default owner for everything in this repo
+* @adamancini
