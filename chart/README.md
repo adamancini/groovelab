@@ -205,6 +205,40 @@ the license-scoped pull secret end-to-end — lives in
 `replicated.enabled=false` overrides into any other install path without
 adding a comparable inline comment justifying why.
 
+## KOTS manifests live in `release/`, not `chart/templates/`
+
+KOTS custom resources (`kots.io/v1beta1 Application`, `kots.io/v1beta2 HelmChart`,
+`kots.io/v1beta1 Config`, `embeddedcluster.replicated.com/v1beta1 Config`, etc.)
+are **not Kubernetes CRDs** — they are never installed into the target cluster.
+They are consumed only by the Replicated Vendor Portal at release-creation time
+and by the KOTS Admin Console at install time. They must therefore live in
+`release/`, which is the directory `replicated release create --yaml-dir` reads.
+
+Putting them in `chart/templates/` breaks `helm install` on plain Kubernetes
+(non-KOTS, non-EC) clusters — including the per-PR customer install test in
+`.github/workflows/pr.yaml` — with `resource mapping not found for kind
+"Application"` / `"HelmChart"` errors, because the kinds are unknown to the
+target cluster's API server.
+
+Current split:
+
+| File                                         | Purpose                                | Lives in       |
+|----------------------------------------------|----------------------------------------|----------------|
+| `release/application.yaml`                   | KOTS Application CR                    | `release/`     |
+| `release/helmchart.yaml`                     | KOTS HelmChart CR                      | `release/`     |
+| `release/embedded-cluster-config.yaml`       | Embedded Cluster Config CR             | `release/`     |
+| `chart/templates/preflight.yaml`             | Secret wrapping a `Preflight` spec     | `chart/`       |
+| `chart/templates/support-bundle.yaml`        | Secret wrapping a `SupportBundle` spec | `chart/`       |
+
+`chart/templates/preflight.yaml` and `chart/templates/support-bundle.yaml` are
+legitimate chart templates: they render `kind: Secret` objects with the
+`troubleshoot.sh/kind` label, which kotsadm and the `troubleshoot` CLI discover
+at runtime. Those ARE cluster resources. This matches the pattern used in
+`replicatedhq/platform-examples` (wg-easy, storagebox, onlineboutique, flipt).
+The bare `troubleshoot.sh/v1beta2 Preflight` / `SupportBundle` manifests
+(without the Secret wrapper) belong in `release/` — groovelab does not ship
+those, only the in-cluster Secret-wrapped variants.
+
 ## Related files
 
 - `.github/workflows/release.yaml` — tag-driven release workflow; rewrites

@@ -37,7 +37,7 @@ distribution workflow, not to sprint ahead of verification.
 - `frontend/` — Vite + React + TypeScript SPA
 - `backend/` — Go chi server, CNPG-backed
 - `chart/` — Helm chart (Helm v4, deps: cloudnative-pg, cert-manager, replicated SDK)
-- `release/` — KOTS manifests (Application, HelmChart, Embedded Cluster Config)
+- `release/` — KOTS release manifests (Application, HelmChart, Embedded Cluster Config). NOT Kubernetes CRDs — consumed by Replicated only. Do not move these into `chart/templates/`.
 - `tests/e2e/` — Tiered e2e shell scripts with Go wrappers (`tier0_test.sh`..`tier4_test.sh`)
 - `.vault/` — Obsidian-compatible knowledge vault (issues, UAT, patterns, decisions, debug notes)
 - `.vault/issues/` — nd issue tracker files (read via `nd`, never edit directly — hook enforced)
@@ -54,6 +54,7 @@ distribution workflow, not to sprint ahead of verification.
 - **Friction log proactively**: whenever Replicated/Helm/CMX surprises you or a mis-assumption bites, append to `FRICTION_LOG.md` via the `friction-log` skill.
 - **Chart image tags**: never hardcode commit SHAs in `chart/values.yaml`. Leave `image.<side>.tag` empty so `.Chart.AppVersion` is the source of truth; CI rewrites `chart/Chart.yaml` from the git tag before `replicated release create`. See `chart/README.md` for the invariant.
 - **Replicated-by-default**: every release + CI install path uses `replicated.enabled=true` (SDK subchart + `proxy.xyyzx.net/proxy/...` image repo + license-scoped `enterprise-pull-secret`). The `replicated.enabled=false` path exists only for local-dev (helmfile-dev profile). Never add it to production or CI install paths without a documented reason. The `.github/workflows/release.yaml` CMX smoke test is the one carved-out exception (unlicensed ephemeral k3s cluster); the customer-grade install path lives in `.github/workflows/pr.yaml`. See `chart/README.md` "Replicated-enabled by default".
+- **KOTS release manifests live in `release/`, not `chart/templates/`**: KOTS CRs (`kots.io/v1beta1 Application`, `kots.io/v1beta2 HelmChart`, KOTS `Config`, Embedded Cluster `Config`, etc.) are not Kubernetes CRDs — they are never installed in the target cluster, only read by the Vendor Portal and the KOTS Admin Console. Putting them in `chart/templates/` breaks `helm install` on plain Kubernetes with `resource mapping not found for kind "Application"`. The only KOTS-adjacent files allowed in `chart/templates/` are `kind: Secret` wrappers around troubleshoot.sh Preflight/SupportBundle specs (labeled `troubleshoot.sh/kind`), which ARE real cluster resources. See `chart/README.md` "KOTS manifests live in `release/`".
 
 ## Required GitHub Secrets
 
