@@ -340,3 +340,11 @@ The CLI (`replicated customer update --kots-install=false --channel ... --email 
 **Resolution:** Renovate caught it because it was enabled up front. Open PRs will be merged as a background task. For future bootcamps / greenfield scaffolding I want to: (a) run Renovate/dependabot on the first commit so drift is visible immediately, (b) explicitly tell the scaffolding agent "use the latest stable major of every dep, and verify with `npm view <pkg> version` / `gh api repos/<owner>/<repo>/releases/latest`" rather than relying on training defaults, (c) treat a green Renovate dashboard as part of "Tier 0 done."
 **Severity:** annoyance
 # GRO-s3mc test PR trigger 2026-04-23T02:09:29Z
+
+## Entry 35 — 2026-04-23 — blocker
+
+**Trying to:** pull a promoted chart via `helm pull oci://registry.replicated.com/<app>/<channel>/<chart>:<version>` in the per-PR customer-grade install test (GRO-s3mc on a 77-char test branch).
+**Expected:** `helm pull` / `helm show chart` succeeds within seconds of `replicated release create --promote` returning success — the same pattern GRO-lcva's earlier test PRs used without issue.
+**Actual:** `replicated release create --promote` returned `Release sequence: 41 ... promoted to test-gro-s3mc-cnpg-ordering--1955e10`, the channel was visible in the vendor portal, but `helm pull` (and `helm show chart`) against the OCI URL returned `not found` indefinitely (3-minute poll budget exhausted). The slug `test-gro-s3mc-cnpg-ordering--1955e10` contains a double-dash because the 28-char prefix of the normalized branch ended in `-` and we appended `-${SHA7}`. Replicated appears to reject or fail to register chart tags under a double-dash channel segment in its OCI endpoint, even though `replicated channel`/`replicated release create` accept it.
+**Resolution:** fixed the slug normalizer in `.github/workflows/pr.yaml` to strip trailing dashes from the 28-char prefix before appending `-${SHA7}`, guaranteeing single-dash separators. ~45 minutes to diagnose because the failure presented as a timing issue (added a poll, still 404) rather than a slug validity issue. The problem should either be documented in the Replicated OCI docs or the platform should reject double-dash channel slugs at `replicated channel create` time.
+**Severity:** blocker
