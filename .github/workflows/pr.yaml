@@ -415,6 +415,22 @@ jobs:
           helmfile --version
           helm plugin list
 
+      # helmfile.yaml.gotmpl reads ./chart/charts/cloudnative-pg/Chart.yaml
+      # via `exec "yq"` to pin the CNPG release version. `helm dependency
+      # update` (run in the Package chart step above) pulls the subchart as
+      # `chart/charts/cloudnative-pg-<ver>.tgz`; helmfile needs the
+      # extracted directory. Match the extraction the lint-test job already
+      # performs so helmfile can resolve the version.
+      - name: Extract subchart tarballs for helmfile
+        run: |
+          helm dependency update chart/
+          (cd chart/charts && for f in *.tgz; do
+            [ -f "$f" ] && tar xzf "$f"
+          done)
+          ls -la chart/charts/
+          test -f chart/charts/cloudnative-pg/Chart.yaml
+          yq '.version' chart/charts/cloudnative-pg/Chart.yaml
+
       # Log in to registry.replicated.com so helmfile can pull the groovelab
       # chart from the Replicated OCI registry. License ID is the username
       # AND password per Replicated docs.
