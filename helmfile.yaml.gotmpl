@@ -48,7 +48,10 @@ environments:
           groovelab: 'oci://registry.replicated.com/{{ env "REPLICATED_APP" | default "groovelab" }}/{{ env "CHANNEL" | default "stable" }}/groovelab'
       - chartVersions:
           cnpg: '{{ exec "yq" (list ".version" "./chart/charts/cloudnative-pg/Chart.yaml") }}'
-          groovelab: '{{ exec "yq" (list ".version" "./chart/Chart.yaml") }}'
+          # CHART_VERSION env override lets CI pin to the per-PR pre-release
+          # tag (e.g. 0.0.0-pr123) without rewriting Chart.yaml. Falls back to
+          # the chart's checked-in version for ad-hoc replicated installs.
+          groovelab: '{{ env "CHART_VERSION" | default (exec "yq" (list ".version" "./chart/Chart.yaml")) }}'
       - imageRegistry:
           # Replicated injects the correct proxy prefix into values.yaml at publish
           # time, so these match what's already in the chart's values.
