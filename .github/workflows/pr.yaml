@@ -448,6 +448,12 @@ jobs:
           CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
           LICENSE_ID: ${{ steps.customer.outputs.license_id }}
         run: |
+          # helmfile.yaml.gotmpl reads the cnpg subchart's Chart.yaml via
+          # `exec yq` to pin its version. The Package step already ran
+          # `helm dependency update chart/`, but that only puts subchart
+          # tarballs in chart/charts/. Extract them so Chart.yaml is
+          # readable on the filesystem.
+          (cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done)
           export REPLICATED_APP="${APP_SLUG}"
           export CHANNEL="${SLUG}"
           export CHART_VERSION
