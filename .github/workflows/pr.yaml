@@ -244,9 +244,16 @@ jobs:
         run: |
           helm dependency update chart/
           mkdir -p release/
+          # --app-version MUST match the GHCR image tag the build job pushed
+          # (env IMAGE_TAG, format `pr-<PR_NUMBER>-<SHORT_SHA>`), because the
+          # chart templates default `image.<side>.tag` to `.Chart.AppVersion`
+          # and we don't pass `--set image.<side>.tag=...` on the customer-
+          # grade install (Replicated injects values, but only rewrites the
+          # repository — never the tag). Mismatched tag = ImagePullBackOff
+          # against `proxy.xyyzx.net/proxy/groovelab/.../groovelab-backend:<wrong-tag>`.
           helm package chart/ \
             --version "$CHART_VERSION" \
-            --app-version "pr-$SLUG" \
+            --app-version "$IMAGE_TAG" \
             --destination /tmp/
           mv "/tmp/groovelab-${CHART_VERSION}.tgz" release/
           ls -la release/
