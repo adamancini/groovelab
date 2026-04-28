@@ -461,23 +461,31 @@ jobs:
         run: |
           # Load-bearing self-test (GRO-i6sx AC3): if Replicated's value
           # injection is firing correctly, `helm show values oci://...`
-          # output will contain a populated `dockerconfigjson:` field. If
-          # the line is missing entirely, license injection is not firing
-          # and the subsequent `helm install` would silently render an
-          # empty `enterprise-pull-secret`, sending app pods straight into
+          # output will contain a non-empty `global.replicated.dockerconfigjson`
+          # field. If absent or empty, license injection is not firing and
+          # the subsequent `helm install` would silently render an empty
+          # `enterprise-pull-secret`, sending app pods straight into
           # ImagePullBackOff. Fail loud here instead.
+          #
+          # Use yq (already a workflow dep, see release.yaml) for structural
+          # YAML parsing — a plain `grep dockerconfigjson:` is unsafe because
+          # `helm show values` prints values.yaml verbatim including the
+          # documentation comment that mentions `dockerconfigjson` by name,
+          # so the diagnostic would falsely pass even when injection didn't
+          # fire (the comment substring matches).
           OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
           echo "[$(date +%H:%M:%S)] helm show values ${OCI_URL} --version ${CHART_VERSION}"
           helm show values "$OCI_URL" \
             --version "$CHART_VERSION" \
             > /tmp/injected-values.yaml
-          if ! grep -q "dockerconfigjson:" /tmp/injected-values.yaml; then
-            echo "FAIL: helm show values output is missing 'dockerconfigjson:' — license injection is not firing."
+          INJECTED=$(yq -r '.global.replicated.dockerconfigjson // ""' /tmp/injected-values.yaml)
+          if [ -z "$INJECTED" ]; then
+            echo "FAIL: helm show values did not return a non-empty global.replicated.dockerconfigjson — license injection is not firing."
             echo "----- helm show values output (first 80 lines) -----"
             head -80 /tmp/injected-values.yaml
             exit 1
           fi
-          echo "OK: license injection verified. dockerconfigjson present in injected values."
+          echo "OK: license injection verified. dockerconfigjson present (length: ${#INJECTED} bytes)."
 
       - name: Install groovelab via OCI (Replicated injects values)
         env:
