@@ -427,7 +427,11 @@ jobs:
             | tar xz -C /tmp helmfile
           sudo mv /tmp/helmfile /usr/local/bin/helmfile
           helmfile version
-          helm plugin install https://github.com/databus23/helm-diff --version "v${HELM_DIFF_VERSION}"
+          # Helm v4 verifies plugin sources by default; helm-diff doesn't ship
+          # provenance, so --verify=false is required.
+          helm plugin install https://github.com/databus23/helm-diff \
+            --version "v${HELM_DIFF_VERSION}" \
+            --verify=false
 
       - name: Helm registry login (registry.replicated.com)
         env:
