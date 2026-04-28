@@ -20,7 +20,10 @@ env:
   GHCR_PREFIX: ghcr.io/adamancini
   APP_SLUG: groovelab
   HELM_VERSION: "4.1.4"
-  HELMFILE_VERSION: "0.171.0"
+  # helmfile v1.4.4+ supports Helm v4. Older versions (e.g. 0.171.0) panic on
+  # `helm version --client --short` because Helm v4 dropped the --client flag.
+  # See helmfile/helmfile#2476.
+  HELMFILE_VERSION: "1.4.4"
   HELM_DIFF_VERSION: "3.10.0"
   K3S_VERSION: "1.32"
 
