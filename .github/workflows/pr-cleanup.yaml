@@ -1,0 +1,116 @@
+name: PR Cleanup
+
+# Tears down per-PR Replicated resources (customer + channel) when a PR is
+# closed or merged. The ephemeral CMX cluster is already removed at the end
+# of each pr.yaml run (and otherwise auto-TTLs in 1h), so this workflow only
+# needs to clean up the long-lived state: the trial customer and the channel.
+#
+# Slug normalization MUST match .github/workflows/pr.yaml step 1 exactly —
+# see GRO-lcva. If you edit the algorithm there, mirror it here.
+#
+# Secrets:
+#   - REPLICATED_API_TOKEN: required for `customer archive` and `channel rm`.
+#   - REPLICATED_ADMIN_TOKEN: optional fallback for `channel demote` if the
+#     regular API token lacks that permission.
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Archive per-PR Replicated resources
+    runs-on: ubuntu-latest
+    env:
+      REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
+      APP_SLUG: groovelab
+    steps:
+      - name: Install Replicated CLI
+        run: |
+          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
+            | grep "browser_download_url.*linux_amd64.tar.gz" \
+            | cut -d '"' -f 4 \
+            | xargs curl -sL \
+            | tar xz -C /usr/local/bin replicated
+
+      # Slug normalization — keep in lockstep with pr.yaml step 1.
+      # HEAD_REF is attacker-controlled; pass via env to avoid injection.
+      - name: Compute slug
+        id: slug
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          BRANCH="$HEAD_REF"
+          RAW=$(printf '%s' "$BRANCH" \
+            | tr '[:upper:]' '[:lower:]' \
+            | tr '/_.' '-' \
+            | tr -c 'a-z0-9-' '-' \
+            | sed -E 's/-+/-/g; s/^-+//; s/-+$//')
+          if [ "${#RAW}" -gt 36 ]; then
+            HASH=$(printf '%s' "$BRANCH" | sha256sum | cut -c1-7)
+            SLUG="${RAW:0:28}-${HASH}"
+          else
+            SLUG="$RAW"
+          fi
+          if [ -z "$SLUG" ]; then
+            SLUG="pr-${PR_NUMBER}"
+          fi
+          echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
+          echo "Slug to clean up: ${SLUG}"
+
+      # Archive the trial customer if it still exists. `customer archive` is
+      # the idempotent tear-down verb; `customer delete` may not be available
+      # on all plans. Failure is tolerated — the 24h trial expiry covers it.
+      - name: Archive trial customer
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          CUSTOMER_NAME="pr-${SLUG}"
+          CUSTOMER_ID=$(replicated customer ls --app "${APP_SLUG}" --output json \
+            | jq -r --arg n "$CUSTOMER_NAME" '.[] | select(.name == $n) | .id // empty')
+          if [ -z "$CUSTOMER_ID" ]; then
+            echo "No customer named ${CUSTOMER_NAME} — nothing to archive."
+            exit 0
+          fi
+          echo "Archiving customer ${CUSTOMER_NAME} (ID: ${CUSTOMER_ID})"
+          replicated customer archive "$CUSTOMER_ID" --app "${APP_SLUG}" || true
+
+      # Demote any releases on the channel, then archive the channel.
+      # `channel demote` may require REPLICATED_ADMIN_TOKEN — swallow errors
+      # and fall through to `channel rm` which handles the common case.
+      - name: Demote and archive per-PR channel
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          REPLICATED_ADMIN_TOKEN: ${{ secrets.REPLICATED_ADMIN_TOKEN }}
+        run: |
+          CHANNEL_ID=$(replicated channel ls --app "${APP_SLUG}" --output json \
+            | jq -r --arg n "$SLUG" '.[] | select(.name == $n) | .id // empty')
+          if [ -z "$CHANNEL_ID" ]; then
+            echo "No channel named ${SLUG} — nothing to archive."
+            exit 0
+          fi
+
+          if [ -n "${REPLICATED_ADMIN_TOKEN:-}" ]; then
+            echo "Using REPLICATED_ADMIN_TOKEN for channel demote."
+            REPLICATED_API_TOKEN_BAK="$REPLICATED_API_TOKEN"
+            export REPLICATED_API_TOKEN="$REPLICATED_ADMIN_TOKEN"
+          fi
+
+          RELEASES=$(replicated release ls --app "${APP_SLUG}" --output json 2>/dev/null \
+            | jq -r --arg c "$SLUG" '.[] | select(.activeChannels[]?.name == $c) | .sequence' 2>/dev/null || true)
+          for SEQ in $RELEASES; do
+            echo "Demoting release sequence ${SEQ} on channel ${SLUG}"
+            replicated release demote "$SEQ" "$CHANNEL_ID" --app "${APP_SLUG}" || true
+          done
+
+          if [ -n "${REPLICATED_API_TOKEN_BAK:-}" ]; then
+            export REPLICATED_API_TOKEN="$REPLICATED_API_TOKEN_BAK"
+          fi
+
+          echo "Archiving channel ${SLUG} (ID: ${CHANNEL_ID})"
+          replicated channel rm "$CHANNEL_ID" --app "${APP_SLUG}" || true
