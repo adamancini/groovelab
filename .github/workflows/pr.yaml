@@ -465,8 +465,15 @@ jobs:
           export CHANNEL="${SLUG}"
           export CHART_VERSION
           export LICENSE_ID
-          echo "[$(date +%H:%M:%S)] helmfile apply -e replicated  (app=${REPLICATED_APP} channel=${CHANNEL} version=${CHART_VERSION})"
-          helmfile -e replicated apply --wait
+          # Use `helmfile sync` rather than `apply`. `apply` runs `helm diff`
+          # first, which renders the groovelab chart against the cluster's
+          # current CRD set — but the CNPG CRDs (clusters.postgresql.cnpg.io)
+          # don't exist yet at diff time, so render fails with
+          # `no matches for kind "Cluster"`. `sync` upgrades each release
+          # in declared order without an upfront diff phase, so CNPG (and
+          # its CRDs) install BEFORE the groovelab chart renders.
+          echo "[$(date +%H:%M:%S)] helmfile sync -e replicated  (app=${REPLICATED_APP} channel=${CHANNEL} version=${CHART_VERSION})"
+          helmfile -e replicated sync
 
       # Step 8 — Smoke tests against the customer-grade install.
       - name: Wait for pods to be ready
