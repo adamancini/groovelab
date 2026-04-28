@@ -20,15 +20,6 @@ env:
   GHCR_PREFIX: ghcr.io/adamancini
   APP_SLUG: groovelab
   HELM_VERSION: "4.1.4"
-  # helmfile v1.4.4+ supports Helm v4. Older versions (e.g. 0.171.0) panic on
-  # `helm version --client --short` because Helm v4 dropped the --client flag.
-  # See helmfile/helmfile#2476.
-  HELMFILE_VERSION: "1.4.4"
-  # helm-diff < v3.14 passes the deprecated --validate flag together with
-  # --dry-run, which Helm v4 rejects ("if any flags in the group
-  # [validate dry-run] are set none of the others can be"). v3.15.6 (latest
-  # as of 2026-04-22) supports Helm v4.
-  HELM_DIFF_VERSION: "3.15.6"
   K3S_VERSION: "1.32"
 
 jobs:
@@ -414,66 +405,94 @@ jobs:
       - name: Verify cluster access
         run: kubectl cluster-info
 
-      # Step 7 — Install via helmfile (GRO-s3mc). Helmfile sequences releases:
-      # CNPG operator chart installs first (and its CRDs reach Established)
-      # before the groovelab release renders the postgresql.cnpg.io/v1
-      # Cluster CR. The `replicated` environment in helmfile.yaml.gotmpl
-      # pulls groovelab from oci://registry.replicated.com/<app>/<channel>/
-      # and exercises the same code path a customer hits (proxy.xyyzx.net
-      # image pulls, Replicated SDK, license-scoped pull secret).
+      # Step 7 — Customer-grade install via bare `helm install oci://...`
+      # (GRO-i6sx). Replicated's OCI registry injects license-scoped values
+      # (notably `global.replicated.dockerconfigjson`, which the SDK subchart
+      # renders into `enterprise-pull-secret`) into the chart at `helm pull`/
+      # `helm install` time, but ONLY when the caller is authenticated via
+      # `helm registry login` against the OCI URL directly. Helmfile breaks
+      # this contract: it does `helm pull` → extract → `helm install
+      # <local-path>`, so the final install is from a local dir and value
+      # injection never fires. Result on plain helm via helmfile: the SDK's
+      # `enterprise-pull-secret` template has nothing to render and app pods
+      # can't pull from `proxy.xyyzx.net`.
       #
-      # Belt-and-suspenders: chart/templates/crd-check-job.yaml runs as a
-      # post-install hook and waits for required CRDs to be Established
-      # regardless of install path.
-      - name: Install helmfile + helm-diff
-        env:
-          HELMFILE_VERSION: ${{ env.HELMFILE_VERSION }}
-          HELM_DIFF_VERSION: ${{ env.HELM_DIFF_VERSION }}
+      # Fix: use bare `helm install oci://...` after `helm registry login`,
+      # and pre-install the CNPG operator separately so its CRDs exist
+      # before the groovelab chart renders the postgresql.cnpg.io Cluster CR.
+      # This mirrors release.yaml's CNPG pre-install step.
+      #
+      # helmfile.yaml.gotmpl is unchanged and still works for local dev (the
+      # dev path doesn't need Replicated value injection). The chart-side
+      # crd-check Helm hook from GRO-s3mc is still in place as
+      # belt-and-suspenders.
+      - name: Pre-install CNPG operator (CRDs first)
         run: |
-          curl -sSL "https://github.com/helmfile/helmfile/releases/download/v${HELMFILE_VERSION}/helmfile_${HELMFILE_VERSION}_linux_amd64.tar.gz" \
-            | tar xz -C /tmp helmfile
-          sudo mv /tmp/helmfile /usr/local/bin/helmfile
-          helmfile version
-          # Helm v4 verifies plugin sources by default; helm-diff doesn't ship
-          # provenance, so --verify=false is required.
-          helm plugin install https://github.com/databus23/helm-diff \
-            --version "v${HELM_DIFF_VERSION}" \
-            --verify=false
+          helm dependency update chart/
+          # Extract the cloudnative-pg subchart so we can install it directly.
+          # `helm dependency update` populates chart/charts/cloudnative-pg-*.tgz;
+          # extract idempotently (skip if already extracted from a prior step).
+          (cd chart/charts && for f in cloudnative-pg-*.tgz; do
+             [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true
+           done)
+          helm install cnpg-operator chart/charts/cloudnative-pg \
+            --namespace cnpg-system --create-namespace \
+            --wait --timeout 3m
 
       - name: Helm registry login (registry.replicated.com)
         env:
           LICENSE_ID: ${{ steps.customer.outputs.license_id }}
         run: |
+          # Authenticated login is what arms Replicated's value-injection
+          # intercept on subsequent `helm pull`/`helm install oci://...`
+          # against the same registry. License ID is both username and
+          # password (Replicated convention).
           echo "$LICENSE_ID" \
             | helm registry login registry.replicated.com \
               --username "$LICENSE_ID" \
               --password-stdin
 
-      - name: Helmfile apply (CNPG → groovelab, ordered)
+      - name: Verify license injection (helm show values diagnostic)
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
           CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
-          LICENSE_ID: ${{ steps.customer.outputs.license_id }}
         run: |
-          # helmfile.yaml.gotmpl reads the cnpg subchart's Chart.yaml via
-          # `exec yq` to pin its version. The Package step already ran
-          # `helm dependency update chart/`, but that only puts subchart
-          # tarballs in chart/charts/. Extract them so Chart.yaml is
-          # readable on the filesystem.
-          (cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done)
-          export REPLICATED_APP="${APP_SLUG}"
-          export CHANNEL="${SLUG}"
-          export CHART_VERSION
-          export LICENSE_ID
-          # Use `helmfile sync` rather than `apply`. `apply` runs `helm diff`
-          # first, which renders the groovelab chart against the cluster's
-          # current CRD set — but the CNPG CRDs (clusters.postgresql.cnpg.io)
-          # don't exist yet at diff time, so render fails with
-          # `no matches for kind "Cluster"`. `sync` upgrades each release
-          # in declared order without an upfront diff phase, so CNPG (and
-          # its CRDs) install BEFORE the groovelab chart renders.
-          echo "[$(date +%H:%M:%S)] helmfile sync -e replicated  (app=${REPLICATED_APP} channel=${CHANNEL} version=${CHART_VERSION})"
-          helmfile -e replicated sync
+          # Load-bearing self-test (GRO-i6sx AC3): if Replicated's value
+          # injection is firing correctly, `helm show values oci://...`
+          # output will contain a populated `dockerconfigjson:` field. If
+          # the line is missing entirely, license injection is not firing
+          # and the subsequent `helm install` would silently render an
+          # empty `enterprise-pull-secret`, sending app pods straight into
+          # ImagePullBackOff. Fail loud here instead.
+          OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
+          echo "[$(date +%H:%M:%S)] helm show values ${OCI_URL} --version ${CHART_VERSION}"
+          helm show values "$OCI_URL" \
+            --version "$CHART_VERSION" \
+            > /tmp/injected-values.yaml
+          if ! grep -q "dockerconfigjson:" /tmp/injected-values.yaml; then
+            echo "FAIL: helm show values output is missing 'dockerconfigjson:' — license injection is not firing."
+            echo "----- helm show values output (first 80 lines) -----"
+            head -80 /tmp/injected-values.yaml
+            exit 1
+          fi
+          echo "OK: license injection verified. dockerconfigjson present in injected values."
+
+      - name: Install groovelab via OCI (Replicated injects values)
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+          CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
+        run: |
+          # No `--set replicated.enabled=...` or `--set
+          # global.replicated.dockerconfigjson=...` overrides — Replicated's
+          # OCI value injection supplies the dockerconfigjson at install
+          # time, and the chart defaults `replicated.enabled=true`. This is
+          # the customer-grade path. GRO-i6sx AC4.
+          OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
+          echo "[$(date +%H:%M:%S)] helm install ${APP_SLUG} ${OCI_URL} --version ${CHART_VERSION}"
+          helm install "${APP_SLUG}" "$OCI_URL" \
+            --version "$CHART_VERSION" \
+            --namespace "${APP_SLUG}" --create-namespace \
+            --wait --timeout 6m
 
       # Step 8 — Smoke tests against the customer-grade install.
       - name: Wait for pods to be ready
@@ -521,15 +540,17 @@ jobs:
           echo "PASS: POST /api/v1/flashcards/answer returned HTTP 404 (no session)"
 
       # Step 9 — Upgrade test: publish a second release on the same channel,
-      # then re-run helmfile apply with the new version. Helmfile detects the
-      # diff and upgrades the groovelab release in place (CNPG release stays
-      # at its installed version). The post-upgrade CRD-check Helm hook in
-      # the chart re-validates that required CRDs are still Established.
-      - name: Upgrade test — package + release + helmfile apply
+      # then re-run `helm upgrade oci://...` against the upgrade version.
+      # Same value-injection contract as the install step — OCI URL +
+      # authenticated registry login means Replicated injects the
+      # license-scoped dockerconfigjson at upgrade time too. The CNPG
+      # operator release stays at its installed version (we only upgrade
+      # groovelab here). The post-upgrade CRD-check Helm hook in the chart
+      # re-validates that required CRDs are still Established.
+      - name: Upgrade test — package + release + helm upgrade
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          LICENSE_ID: ${{ steps.customer.outputs.license_id }}
         run: |
           NAMESPACE=groovelab
           UPGRADE_VERSION="0.0.0-pr${PR_NUMBER}.1"
@@ -547,12 +568,12 @@ jobs:
             --app "${APP_SLUG}" \
             --output json
 
-          export REPLICATED_APP="${APP_SLUG}"
-          export CHANNEL="${SLUG}"
-          export CHART_VERSION="${UPGRADE_VERSION}"
-          export LICENSE_ID
-          echo "[$(date +%H:%M:%S)] helmfile apply -e replicated  (upgrade to ${UPGRADE_VERSION})"
-          helmfile -e replicated apply --wait
+          OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
+          echo "[$(date +%H:%M:%S)] helm upgrade ${APP_SLUG} ${OCI_URL} --version ${UPGRADE_VERSION}"
+          helm upgrade "${APP_SLUG}" "$OCI_URL" \
+            --version "$UPGRADE_VERSION" \
+            --namespace "$NAMESPACE" \
+            --wait --timeout 6m
 
           echo "Re-running smoke tests after upgrade..."
           kubectl port-forward svc/groovelab-backend 18081:8080 -n "$NAMESPACE" &
