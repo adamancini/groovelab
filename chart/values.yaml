@@ -2,8 +2,23 @@
 
 global:
   imagePullSecrets: []
-  replicated:
-    dockerconfigjson: ""
+  # NOTE: do NOT set `global.replicated.dockerconfigjson` here. The Replicated
+  # SDK subchart uses `hasKey` to decide whether to render the
+  # `enterprise-pull-secret` Secret from this value, and `hasKey` returns true
+  # for an empty string. Shipping `dockerconfigjson: ""` therefore renders an
+  # invalid Secret (`data[.dockerconfigjson]: Invalid value: "": unexpected
+  # end of JSON input`) on customer-helm installs that don't pull the chart
+  # through Replicated's OCI registry (which injects the real value).
+  #
+  # Install paths that legitimately need the secret set it explicitly:
+  #   - registry.replicated.com OCI pull: Replicated injects the value at
+  #     publish time.
+  #   - KOTS / Embedded Cluster: KOTS sets it via HelmChart `values:` overrides.
+  #   - Customer plain-Helm with proxy.xyyzx.net pulls: caller passes
+  #     `--set global.replicated.dockerconfigjson=...` themselves.
+  # Everyone else (helmfile dev, bare CMX smoke installs, customer helm
+  # without proxy auth) intentionally has no key, and the SDK skips the Secret.
+  # See GRO-s3mc.
 
 images:
   pullSecrets: []

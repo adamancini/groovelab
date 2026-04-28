@@ -205,6 +205,39 @@ the license-scoped pull secret end-to-end — lives in
 `replicated.enabled=false` overrides into any other install path without
 adding a comparable inline comment justifying why.
 
+### Why `global.replicated.dockerconfigjson` is not in `chart/values.yaml`
+
+`chart/values.yaml` deliberately does **not** ship a default value for
+`global.replicated.dockerconfigjson`. The Replicated SDK subchart uses
+`hasKey` to decide whether to render the `enterprise-pull-secret` Secret
+from this value, and `hasKey` returns true for an empty string. Shipping
+`dockerconfigjson: ""` therefore renders an invalid Secret on any install
+path that doesn't pull through Replicated's OCI registry:
+
+```
+Error: Secret "enterprise-pull-secret" is invalid:
+data[.dockerconfigjson]: Invalid value: "": unexpected end of JSON input
+```
+
+(Surfaced by GRO-s3mc's CMX install test on a per-PR channel, where the
+chart was packaged from raw source rather than pulled-and-injected by the
+Replicated registry.)
+
+Install paths that legitimately need the secret set it explicitly:
+
+- **`oci://registry.replicated.com/...` pulls** — Replicated injects the
+  real value at publish time before the chart reaches the cluster.
+- **KOTS / Embedded Cluster** — KOTS sets it via the HelmChart CR's
+  `values:` overrides after templating its own license metadata in.
+- **Customer plain-Helm with proxy.xyyzx.net pulls** — the operator
+  passes `--set global.replicated.dockerconfigjson=<base64>` themselves.
+
+Everyone else (helmfile dev, bare CMX smoke installs, customer Helm
+without proxy auth) intentionally has no key, and the SDK skips the
+Secret. Our chart's own pull-secret list (`_helpers.tpl`'s
+`groovelab.imagePullSecrets`) guards on truthiness, so an absent key
+behaves correctly there too.
+
 ## KOTS manifests live in `release/`, not `chart/templates/`
 
 KOTS custom resources (`kots.io/v1beta1 Application`, `kots.io/v1beta2 HelmChart`,
