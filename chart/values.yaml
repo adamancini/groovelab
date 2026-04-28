@@ -88,3 +88,35 @@ features:
     # enabled is controlled by the track_export_enabled license entitlement field.
     # Default false; overridden by KOTS HelmChart CR or operator --set flag.
     enabled: "false"
+
+# crdCheck — post-install/post-upgrade Helm hook Job that waits for required
+# CRDs (e.g. clusters.postgresql.cnpg.io from the CNPG operator) to be
+# Established before downstream operations run. Belt-and-suspenders for
+# install-time ordering: helmfile sequences CNPG before groovelab in CI, but
+# this hook makes the chart safe under ANY install path (bare `helm install`,
+# KOTS, Embedded Cluster).
+#
+# Disable for airgap / offline installs that pre-establish CRDs out-of-band:
+#   --set crdCheck.enabled=false
+#
+# See chart/README.md "CRD-check post-install hook" and GRO-s3mc.
+crdCheck:
+  enabled: true
+  # Image: NOT bitnami/kubectl (banned per CLAUDE.md). registry.k8s.io/kubectl
+  # is the official upstream image published by the Kubernetes project.
+  image:
+    repository: registry.k8s.io/kubectl
+    tag: v1.32.0
+    pullPolicy: IfNotPresent
+  # Required CRDs to wait for. Add subchart CRDs here as the chart grows.
+  crds:
+    - clusters.postgresql.cnpg.io
+  # Per-CRD wait timeout (seconds).
+  timeout: 60
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
