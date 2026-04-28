@@ -487,11 +487,20 @@ jobs:
           # OCI value injection supplies the dockerconfigjson at install
           # time, and the chart defaults `replicated.enabled=true`. This is
           # the customer-grade path. GRO-i6sx AC4.
+          #
+          # `--set cloudnative-pg.enabled=false` mirrors helmfile.yaml.gotmpl:
+          # the CNPG operator is installed as its own Helm release in the
+          # previous step, so the embedded cloudnative-pg subchart must be
+          # disabled here. Otherwise Helm v4 rejects the install with
+          # "CustomResourceDefinition ... cannot be imported into the current
+          # release: invalid ownership metadata" because the CNPG CRDs already
+          # carry release-name=cnpg-operator annotations.
           OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
           echo "[$(date +%H:%M:%S)] helm install ${APP_SLUG} ${OCI_URL} --version ${CHART_VERSION}"
           helm install "${APP_SLUG}" "$OCI_URL" \
             --version "$CHART_VERSION" \
             --namespace "${APP_SLUG}" --create-namespace \
+            --set cloudnative-pg.enabled=false \
             --wait --timeout 6m
 
       # Step 8 — Smoke tests against the customer-grade install.
@@ -573,6 +582,7 @@ jobs:
           helm upgrade "${APP_SLUG}" "$OCI_URL" \
             --version "$UPGRADE_VERSION" \
             --namespace "$NAMESPACE" \
+            --set cloudnative-pg.enabled=false \
             --wait --timeout 6m
 
           echo "Re-running smoke tests after upgrade..."
