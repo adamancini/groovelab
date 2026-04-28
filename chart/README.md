@@ -365,10 +365,45 @@ automatically via the KOTS HelmChart CR's `weight` field. The
 in-chart CRD-check hook still runs on those paths and is a no-op when
 CRDs are already Established.
 
+## Local per-PR install (`make pr-test`)
+
+The repo-root `Makefile` has `pr-*` targets that mirror
+`.github/workflows/pr.yaml`'s `cmx-test` job so you can reproduce a customer-
+grade install from your laptop without push-and-wait. Slug normalization is
+shared via `scripts/replicated-slug.sh` (sourced by both the Makefile and the
+GitHub Actions workflows — single source of truth per GRO-m1bc).
+
+```sh
+# Print the normalized slug for the current branch (no side effects).
+make pr-slug
+
+# End-to-end (requires REPLICATED_API_TOKEN exported):
+#   1. create or reuse the per-branch Replicated channel
+#   2. create or reuse the trial customer licensed to that channel
+#   3. provision a CMX k3s cluster (1h TTL)
+#   4. package the chart, release it, helm install via OCI w/ license injection
+#   5. run smoke tests (/healthz 200, /flashcards/answer 404)
+make pr-test
+
+# Pin the chart appVersion to a specific GHCR image tag while iterating.
+make pr-test IMAGE_TAG=pr-123-abc1234
+
+# Clean up everything created above.
+make pr-teardown
+```
+
+Guards: `pr-cluster` and `pr-install` refuse to run on `main`/`master`. All
+`pr-*` targets that hit Replicated require `REPLICATED_API_TOKEN`. Env vars
+go AFTER the command per the project convention (`make pr-test FOO=bar`,
+not `FOO=bar make pr-test`).
+
 ## Related files
 
 - `.github/workflows/release.yaml` — tag-driven release workflow; rewrites
   Chart.yaml before `replicated release create`.
+- `.github/workflows/pr.yaml` — per-PR customer-grade install (mirrored by
+  `make pr-test`).
+- `scripts/replicated-slug.sh` — shared branch → channel-slug normalizer.
 - `chart/templates/{frontend,backend}/deployment.yaml` — image reference
   resolution logic.
 - `chart/values.yaml` — empty `tag:` fields; `repository:` defaults to the

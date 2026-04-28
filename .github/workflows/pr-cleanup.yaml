@@ -29,6 +29,10 @@ jobs:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
       APP_SLUG: groovelab
     steps:
+      # Need the repo on disk to source scripts/replicated-slug.sh.
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Install Replicated CLI
         run: |
           curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
@@ -45,18 +49,13 @@ jobs:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          # Slug normalization sourced from scripts/replicated-slug.sh —
+          # single source of truth shared with pr.yaml and the local
+          # Makefile (`make pr-slug`). See GRO-m1bc.
+          # shellcheck source=../../scripts/replicated-slug.sh
+          source "${GITHUB_WORKSPACE}/scripts/replicated-slug.sh"
           BRANCH="$HEAD_REF"
-          RAW=$(printf '%s' "$BRANCH" \
-            | tr '[:upper:]' '[:lower:]' \
-            | tr '/_.' '-' \
-            | tr -c 'a-z0-9-' '-' \
-            | sed -E 's/-+/-/g; s/^-+//; s/-+$//')
-          if [ "${#RAW}" -gt 36 ]; then
-            HASH=$(printf '%s' "$BRANCH" | sha256sum | cut -c1-7)
-            SLUG="${RAW:0:28}-${HASH}"
-          else
-            SLUG="$RAW"
-          fi
+          SLUG=$(normalize-slug "$BRANCH")
           if [ -z "$SLUG" ]; then
             SLUG="pr-${PR_NUMBER}"
           fi
