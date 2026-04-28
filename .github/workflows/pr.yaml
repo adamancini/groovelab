@@ -519,7 +519,21 @@ jobs:
             [ -z "$NOT_READY" ] && break
             if [ "$(date +%s)" -ge "$DEADLINE" ]; then
               echo "TIMEOUT: pods not ready after 5 minutes"
-              kubectl describe pods -n "$NAMESPACE" 2>/dev/null | tail -80
+              echo "===== Non-Running pods (full describe) ====="
+              kubectl get pods -n "$NAMESPACE" --no-headers 2>/dev/null \
+                | grep -v -E "Running|Completed" \
+                | awk '{print $1}' \
+                | while read -r POD; do
+                    echo "----- describe $POD -----"
+                    kubectl describe pod "$POD" -n "$NAMESPACE" 2>/dev/null
+                  done
+              echo "===== Recent events ====="
+              kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp 2>/dev/null | tail -30
+              echo "===== imagePullSecrets on Deployments ====="
+              kubectl get deploy -n "$NAMESPACE" -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.template.spec.imagePullSecrets}{"\n"}{end}' 2>/dev/null
+              echo "===== enterprise-pull-secret presence ====="
+              kubectl get secret -n "$NAMESPACE" enterprise-pull-secret -o jsonpath='{.metadata.name}{"\n"}' 2>/dev/null \
+                || echo "enterprise-pull-secret NOT present"
               exit 1
             fi
             sleep 15
