@@ -24,7 +24,11 @@ env:
   # `helm version --client --short` because Helm v4 dropped the --client flag.
   # See helmfile/helmfile#2476.
   HELMFILE_VERSION: "1.4.4"
-  HELM_DIFF_VERSION: "3.10.0"
+  # helm-diff < v3.14 passes the deprecated --validate flag together with
+  # --dry-run, which Helm v4 rejects ("if any flags in the group
+  # [validate dry-run] are set none of the others can be"). v3.15.6 (latest
+  # as of 2026-04-22) supports Helm v4.
+  HELM_DIFF_VERSION: "3.15.6"
   K3S_VERSION: "1.32"
 
 jobs:
