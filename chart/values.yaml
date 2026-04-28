@@ -117,11 +117,15 @@ features:
 # See chart/README.md "CRD-check post-install hook" and GRO-s3mc.
 crdCheck:
   enabled: true
-  # Image: NOT bitnami/kubectl (banned per CLAUDE.md). registry.k8s.io/kubectl
-  # is the official upstream image published by the Kubernetes project.
+  # Image: NOT bitnami/kubectl (banned per CLAUDE.md). We use `alpine/k8s`
+  # because the Job runs a small `/bin/sh` polling loop over multiple CRDs
+  # (with logging + per-CRD timeout) — `registry.k8s.io/kubectl` is a
+  # distroless-style image with no shell, which fails on `command: [/bin/sh,...]`.
+  # `alpine/k8s` is first-party (alpinelinux org, not bitnami), multi-arch,
+  # and ships kubectl + busybox shell. Documented in chart/README.md.
   image:
-    repository: registry.k8s.io/kubectl
-    tag: v1.32.0
+    repository: alpine/k8s
+    tag: "1.32.3"
     pullPolicy: IfNotPresent
   # Required CRDs to wait for. Add subchart CRDs here as the chart grows.
   crds:

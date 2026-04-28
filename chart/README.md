@@ -313,9 +313,16 @@ KOTS, Embedded Cluster — even without helmfile orchestration.
 Pattern adapted from
 [`replicatedhq/platform-examples` multi-chart-orchestration](https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration),
 which uses `bitnami/kubectl`. This chart cannot use Bitnami images
-(see CLAUDE.md "Non-Negotiables") and uses `registry.k8s.io/kubectl`
-instead — the official upstream image published by the Kubernetes
-project.
+(see CLAUDE.md "Non-Negotiables") and uses
+[`alpine/k8s`](https://hub.docker.com/r/alpine/k8s) instead — first-party
+to the Alpine Linux organization, multi-arch, and ships kubectl alongside
+a busybox shell. We considered `registry.k8s.io/kubectl` (the official
+upstream image from the Kubernetes project) but that image is
+distroless-style with no shell, which fails the Job's small polling loop
+(`command: [/bin/sh, -c, ...]`). The polling loop logs progress per CRD
+and applies a per-CRD timeout, which is harder to express as a single
+`kubectl wait` invocation; alpine/k8s gives us the shell we need without
+violating the Bitnami ban.
 
 Configuration (`values.yaml`):
 
@@ -323,8 +330,8 @@ Configuration (`values.yaml`):
 crdCheck:
   enabled: true                       # disable for airgap / pre-established CRDs
   image:
-    repository: registry.k8s.io/kubectl
-    tag: v1.32.0
+    repository: alpine/k8s            # first-party (NOT bitnami); ships shell+kubectl
+    tag: "1.32.3"
   crds:
     - clusters.postgresql.cnpg.io     # add subchart CRDs here as the chart grows
   timeout: 60                         # per-CRD wait timeout in seconds
