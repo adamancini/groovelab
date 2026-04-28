@@ -497,11 +497,14 @@ jobs:
           # carry release-name=cnpg-operator annotations.
           OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
           echo "[$(date +%H:%M:%S)] helm install ${APP_SLUG} ${OCI_URL} --version ${CHART_VERSION}"
+          # No --wait here: the next step ("Wait for pods to be ready") polls
+          # kubectl with timestamped lines and a 5m deadline, and dumps
+          # `kubectl describe pods` on timeout. That's strictly better
+          # observability than a silent `helm install --wait` deadline.
           helm install "${APP_SLUG}" "$OCI_URL" \
             --version "$CHART_VERSION" \
             --namespace "${APP_SLUG}" --create-namespace \
-            --set cloudnative-pg.enabled=false \
-            --wait --timeout 6m
+            --set cloudnative-pg.enabled=false
 
       # Step 8 — Smoke tests against the customer-grade install.
       - name: Wait for pods to be ready
