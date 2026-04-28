@@ -205,6 +205,39 @@ the license-scoped pull secret end-to-end — lives in
 `replicated.enabled=false` overrides into any other install path without
 adding a comparable inline comment justifying why.
 
+### Why `global.replicated.dockerconfigjson` is not in `chart/values.yaml`
+
+`chart/values.yaml` deliberately does **not** ship a default value for
+`global.replicated.dockerconfigjson`. The Replicated SDK subchart uses
+`hasKey` to decide whether to render the `enterprise-pull-secret` Secret
+from this value, and `hasKey` returns true for an empty string. Shipping
+`dockerconfigjson: ""` therefore renders an invalid Secret on any install
+path that doesn't pull through Replicated's OCI registry:
+
+```
+Error: Secret "enterprise-pull-secret" is invalid:
+data[.dockerconfigjson]: Invalid value: "": unexpected end of JSON input
+```
+
+(Surfaced by GRO-s3mc's CMX install test on a per-PR channel, where the
+chart was packaged from raw source rather than pulled-and-injected by the
+Replicated registry.)
+
+Install paths that legitimately need the secret set it explicitly:
+
+- **`oci://registry.replicated.com/...` pulls** — Replicated injects the
+  real value at publish time before the chart reaches the cluster.
+- **KOTS / Embedded Cluster** — KOTS sets it via the HelmChart CR's
+  `values:` overrides after templating its own license metadata in.
+- **Customer plain-Helm with proxy.xyyzx.net pulls** — the operator
+  passes `--set global.replicated.dockerconfigjson=<base64>` themselves.
+
+Everyone else (helmfile dev, bare CMX smoke installs, customer Helm
+without proxy auth) intentionally has no key, and the SDK skips the
+Secret. Our chart's own pull-secret list (`_helpers.tpl`'s
+`groovelab.imagePullSecrets`) guards on truthiness, so an absent key
+behaves correctly there too.
+
 ## KOTS manifests live in `release/`, not `chart/templates/`
 
 KOTS custom resources (`kots.io/v1beta1 Application`, `kots.io/v1beta2 HelmChart`,
@@ -238,6 +271,99 @@ at runtime. Those ARE cluster resources. This matches the pattern used in
 The bare `troubleshoot.sh/v1beta2 Preflight` / `SupportBundle` manifests
 (without the Secret wrapper) belong in `release/` — groovelab does not ship
 those, only the in-cluster Secret-wrapped variants.
+
+## CRD-check post-install hook
+
+The chart renders `postgresql.cnpg.io/v1 Cluster` resources from the
+CloudNativePG operator. Helm installs subchart CRDs in `charts/*/crds/`
+before parent templates, but CNPG ships its CRDs as templates (not in
+`crds/`), which means the parent `Cluster` CR can race the CRD's
+Establishment under bare `helm install`. Symptom (from GRO-s3mc and
+GRO-im3o):
+
+```
+resource mapping not found for name: "groovelab-postgresql"
+no matches for kind "Cluster" in version "postgresql.cnpg.io/v1"
+ensure CRDs are installed first
+```
+
+Two layers handle this:
+
+### Layer 1 — Helmfile-driven install (CI + recommended customer install)
+
+`helmfile.yaml.gotmpl` declares two ordered releases: `cnpg` (the CNPG
+operator chart in its own namespace) and `groovelab` (this chart with
+`cloudnative-pg.enabled=false` so the subchart isn't double-installed).
+The `needs:` directive forces helmfile to install CNPG and wait for it
+before installing groovelab. `.github/workflows/pr.yaml` invokes
+`helmfile -e replicated apply` for the per-PR customer-grade install
+test (GRO-lcva), exercising the same OCI URL a customer hits.
+
+### Layer 2 — In-chart CRD-check Helm hook (belt and suspenders)
+
+`chart/templates/crd-check-job.yaml` renders a `post-install`/
+`post-upgrade` Job (with its own ServiceAccount + ClusterRole +
+ClusterRoleBinding, all `helm.sh/hook` annotated and deleted on
+success) that polls
+`kubectl get crd <name> -o jsonpath='{.status.conditions[?(@.type=="Established")].status}'`
+until each required CRD reports `True`, with a configurable timeout.
+This makes the chart safe under ANY install path — bare `helm install`,
+KOTS, Embedded Cluster — even without helmfile orchestration.
+
+Pattern adapted from
+[`replicatedhq/platform-examples` multi-chart-orchestration](https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration),
+which uses `bitnami/kubectl`. This chart cannot use Bitnami images
+(see CLAUDE.md "Non-Negotiables") and uses
+[`alpine/k8s`](https://hub.docker.com/r/alpine/k8s) instead — first-party
+to the Alpine Linux organization, multi-arch, and ships kubectl alongside
+a busybox shell. We considered `registry.k8s.io/kubectl` (the official
+upstream image from the Kubernetes project) but that image is
+distroless-style with no shell, which fails the Job's small polling loop
+(`command: [/bin/sh, -c, ...]`). The polling loop logs progress per CRD
+and applies a per-CRD timeout, which is harder to express as a single
+`kubectl wait` invocation; alpine/k8s gives us the shell we need without
+violating the Bitnami ban.
+
+Configuration (`values.yaml`):
+
+```yaml
+crdCheck:
+  enabled: true                       # disable for airgap / pre-established CRDs
+  image:
+    repository: alpine/k8s            # first-party (NOT bitnami); ships shell+kubectl
+    tag: "1.32.3"
+  crds:
+    - clusters.postgresql.cnpg.io     # add subchart CRDs here as the chart grows
+  timeout: 60                         # per-CRD wait timeout in seconds
+```
+
+The Job runs with `hook-weight: -5` (ServiceAccount/RBAC at `-10`) so
+it executes ahead of any other post-install hooks that assume CRDs
+exist. `before-hook-creation,hook-succeeded` hook-delete-policy
+ensures clean re-installs.
+
+### Installing on plain Helm (without helmfile or Replicated)
+
+If you don't have helmfile available, install CNPG first then groovelab:
+
+```bash
+# 1. Install CNPG operator (CRDs reach Established before step 2).
+helm install cloudnative-pg \
+  oci://ghcr.io/cloudnative-pg/charts/cloudnative-pg \
+  --namespace cnpg-system --create-namespace \
+  --wait --timeout 5m
+
+# 2. Install groovelab with the bundled CNPG subchart disabled.
+helm install groovelab ./chart \
+  --namespace groovelab --create-namespace \
+  --set cloudnative-pg.enabled=false \
+  --wait --timeout 6m
+```
+
+Replicated/KOTS and Embedded Cluster installs handle ordering
+automatically via the KOTS HelmChart CR's `weight` field. The
+in-chart CRD-check hook still runs on those paths and is a no-op when
+CRDs are already Established.
 
 ## Related files
 

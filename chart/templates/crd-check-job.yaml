@@ -1,0 +1,127 @@
+{{- /*
+CRD-check post-install/post-upgrade Helm hook.
+
+Pattern adapted from
+https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration
+(which uses bitnami/kubectl). This chart cannot use Bitnami images
+(see CLAUDE.md "Non-Negotiables"); we use the official upstream
+registry.k8s.io/kubectl image instead.
+
+Belt-and-suspenders for CNPG CRD ordering: the helmfile pipeline
+in helmfile.yaml.gotmpl already installs CNPG before groovelab via
+`needs:`, but this hook makes the chart safe under ANY install path
+(bare `helm install`, KOTS, Embedded Cluster) by waiting for the
+required CRDs to be Established before downstream operations rely
+on them.
+
+Hook weight -5 puts this Job ahead of any other post-install hooks
+that might assume CRDs are ready. `hook-succeeded` deletes the Job
+on success so re-installs don't collide with a stale resource name.
+*/ -}}
+{{- if .Values.crdCheck.enabled }}
+{{- $name := printf "%s-crd-check" (include "groovelab.fullname" .) }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+rules:
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 60
+  template:
+    metadata:
+      labels:
+        {{- include "groovelab.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ $name }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: crd-check
+          image: "{{ .Values.crdCheck.image.repository }}:{{ .Values.crdCheck.image.tag }}"
+          imagePullPolicy: {{ .Values.crdCheck.image.pullPolicy | default "IfNotPresent" }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              TIMEOUT={{ .Values.crdCheck.timeout | default 60 }}
+              CRDS="{{ join " " .Values.crdCheck.crds }}"
+              echo "[crd-check] Waiting up to ${TIMEOUT}s for CRDs to be Established: ${CRDS}"
+              DEADLINE=$(( $(date +%s) + TIMEOUT ))
+              for CRD in ${CRDS}; do
+                while true; do
+                  STATUS=$(kubectl get crd "${CRD}" \
+                    -o jsonpath='{.status.conditions[?(@.type=="Established")].status}' \
+                    2>/dev/null || true)
+                  if [ "${STATUS}" = "True" ]; then
+                    echo "[crd-check] ${CRD} Established"
+                    break
+                  fi
+                  if [ "$(date +%s)" -ge "${DEADLINE}" ]; then
+                    echo "[crd-check] TIMEOUT waiting for ${CRD} (status='${STATUS}')"
+                    kubectl get crd "${CRD}" -o yaml || true
+                    exit 1
+                  fi
+                  echo "[crd-check] ${CRD} not Established yet (status='${STATUS}'); sleeping 2s"
+                  sleep 2
+                done
+              done
+              echo "[crd-check] All required CRDs Established."
+          resources:
+            {{- toYaml .Values.crdCheck.resources | nindent 12 }}
+{{- end }}
