@@ -588,9 +588,14 @@ jobs:
           NAMESPACE=groovelab
           UPGRADE_VERSION="0.0.0-pr${PR_NUMBER}.1"
           rm -f release/groovelab-*.tgz
+          # Same appVersion contract as the install Package step:
+          # appVersion must match the GHCR tag the build job pushed.
+          # Upgrade reuses the SAME image (only chart bumps), so IMAGE_TAG
+          # is correct here too. Previous value `pr-${SLUG}-upgrade` was
+          # also broken — no GHCR image is published under that tag.
           helm package chart/ \
             --version "$UPGRADE_VERSION" \
-            --app-version "pr-${SLUG}-upgrade" \
+            --app-version "$IMAGE_TAG" \
             --destination /tmp/
           mv "/tmp/groovelab-${UPGRADE_VERSION}.tgz" release/
 
@@ -602,6 +607,20 @@ jobs:
             --output json
 
           OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
+          # Replicated's OCI registry can lag a few seconds behind a fresh
+          # `release create --promote`. Poll until `helm show chart` succeeds
+          # against the new version (max ~60s) before running `helm upgrade`,
+          # otherwise we hit `FetchReference: <oci-url>:<ver>: not found`.
+          echo "[$(date +%H:%M:%S)] Waiting for OCI registry to publish ${UPGRADE_VERSION}..."
+          for i in $(seq 1 12); do
+            if helm show chart "$OCI_URL" --version "$UPGRADE_VERSION" >/dev/null 2>&1; then
+              echo "[$(date +%H:%M:%S)] OCI registry ready (attempt $i)."
+              break
+            fi
+            echo "[$(date +%H:%M:%S)] Not yet (attempt $i/12), sleeping 5s..."
+            sleep 5
+          done
+
           echo "[$(date +%H:%M:%S)] helm upgrade ${APP_SLUG} ${OCI_URL} --version ${UPGRADE_VERSION}"
           helm upgrade "${APP_SLUG}" "$OCI_URL" \
             --version "$UPGRADE_VERSION" \
