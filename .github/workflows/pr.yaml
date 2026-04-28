@@ -454,6 +454,8 @@ jobs:
               --username "$LICENSE_ID" \
               --password-stdin
 
+      # NOTE (test/gate-fix-verify): throwaway PR to verify the new yq-based
+      # diagnostic still passes against a real Replicated injection path.
       - name: Verify license injection (helm show values diagnostic)
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
