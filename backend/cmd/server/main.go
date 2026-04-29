@@ -1,5 +1,7 @@
 package main
 
+// GRO-jg8v throwaway code change for path-filter verification.
+
 import (
 	"context"
 	"log"
