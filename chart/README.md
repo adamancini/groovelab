@@ -397,6 +397,42 @@ Guards: `pr-cluster` and `pr-install` refuse to run on `main`/`master`. All
 go AFTER the command per the project convention (`make pr-test FOO=bar`,
 not `FOO=bar make pr-test`).
 
+## Image signature verification (cosign)
+
+Both `groovelab-frontend` and `groovelab-backend` images published to
+`ghcr.io/adamancini/` are keyless-signed via Cosign + GitHub Actions OIDC
+during CI (`.github/workflows/pr.yaml` for per-PR images,
+`.github/workflows/release.yaml` for tag-driven releases). The same workflow
+that builds + pushes the image issues the signature, with the OIDC token
+binding the signature to the workflow path and commit SHA. The CMX install
+job in `pr.yaml` runs `cosign verify` against the GHCR images after pods are
+Running (step "Verify image signatures (cosign keyless)") — this is the
+same command a customer or downstream operator can run to independently
+confirm provenance before pulling.
+
+To verify a specific tag yourself (no public key needed — keyless verify
+relies on the Sigstore transparency log + the OIDC certificate identity):
+
+```bash
+# Install cosign: https://docs.sigstore.dev/cosign/installation/
+TAG="<the image tag to verify, e.g. v1.2.3 or pr-123-abc1234>"
+
+for image in groovelab-frontend groovelab-backend; do
+  cosign verify "ghcr.io/adamancini/${image}:${TAG}" \
+    --certificate-identity-regexp='^https://github.com/adamancini/groovelab/.github/workflows/(pr|release)\.yaml@' \
+    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
+    --output json \
+    | jq -r '.[0].critical.identity."docker-reference"'
+done
+```
+
+A successful verify prints the verified `docker-reference` (e.g.
+`ghcr.io/adamancini/groovelab-frontend`) and exits 0. A signature
+mismatch — wrong repo, wrong workflow path, untrusted issuer — exits non-zero
+with a clear `no matching signatures` or `certificate identity` error.
+Pin `--certificate-identity-regexp` more tightly if you only trust one
+workflow path (drop the `(pr|release)` alternation).
+
 ## Related files
 
 - `.github/workflows/release.yaml` — tag-driven release workflow; rewrites
