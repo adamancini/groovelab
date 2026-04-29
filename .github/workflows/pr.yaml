@@ -550,6 +550,64 @@ jobs:
           done
           echo "All pods running."
 
+      # GRO-510z — Cosign keyless verification of the GHCR-published images
+      # used by this install. Runs AFTER pods are Running (so a stale-cache
+      # or registry-mirror tampering scenario is caught against the image
+      # the cluster actually pulled), and BEFORE smoke tests (so a signature
+      # mismatch fails the job at the security gate, not buried in app
+      # behavior). The build-sign job in this same workflow keyless-signs
+      # the same ${IMAGE_TAG} (= pr-<N>-<sha7>) for both frontend + backend;
+      # the chart's appVersion is set to ${IMAGE_TAG} at package time, so
+      # verifying groovelab-{frontend,backend}:${IMAGE_TAG} here is
+      # equivalent to verifying what the running pods pulled.
+      #
+      # Identity regex is anchored to the repo + workflow path so a stolen
+      # OIDC token from a different repo or workflow can't substitute a
+      # signature for ours. OIDC issuer is the GitHub Actions issuer.
+      # All inputs come from env (IMAGE_TAG, GHCR_PREFIX) — no untrusted
+      # github.event.* fields are interpolated into the run: script.
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v2.4.1'
+
+      - name: Verify image signatures (cosign keyless)
+        env:
+          IMAGE_REF_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          set -euo pipefail
+          IDENTITY_REGEXP='^https://github.com/adamancini/groovelab/.github/workflows/pr.yaml@'
+          OIDC_ISSUER='https://token.actions.githubusercontent.com'
+          for image in groovelab-frontend groovelab-backend; do
+            REF="${GHCR_PREFIX}/${image}:${IMAGE_REF_TAG}"
+            echo "[$(date +%H:%M:%S)] cosign verify ${REF}"
+            # Defense-in-depth (story AC6): JSON-parse the verify output and
+            # confirm the verified docker-reference matches the image we
+            # actually intended to verify. Catches the (rare) case where
+            # cosign exits 0 against a substituted reference.
+            VERIFIED_REF=$(cosign verify "${REF}" \
+              --certificate-identity-regexp="${IDENTITY_REGEXP}" \
+              --certificate-oidc-issuer="${OIDC_ISSUER}" \
+              --output json \
+              | jq -r '.[0].critical.identity."docker-reference" // empty')
+            if [ -z "${VERIFIED_REF}" ]; then
+              echo "FAIL: cosign verify for ${image} returned no docker-reference"
+              exit 1
+            fi
+            EXPECTED_REPO="${GHCR_PREFIX}/${image}"
+            case "${VERIFIED_REF}" in
+              "${EXPECTED_REPO}"|"${EXPECTED_REPO}":*)
+                echo "OK: ${image} signature verified (subject=${VERIFIED_REF})"
+                ;;
+              *)
+                echo "FAIL: ${image} signature verified but docker-reference mismatch."
+                echo "  expected repo: ${EXPECTED_REPO}"
+                echo "  verified ref:  ${VERIFIED_REF}"
+                exit 1
+                ;;
+            esac
+          done
+
       - name: Smoke test — /healthz 200 and session contract 404
         run: |
           NAMESPACE=groovelab
