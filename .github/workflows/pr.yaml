@@ -51,6 +51,7 @@ jobs:
           # Negated patterns: `code` is true when ANY changed file is NOT
           # purely documentation/vault/gitignore. If every change matches one
           # of these doc-class paths, `code` is false and heavy jobs skip.
+          predicate-quantifier: every
           filters: |
             code:
               - '!**/*.md'
