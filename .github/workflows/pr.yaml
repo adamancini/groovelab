@@ -48,9 +48,12 @@ jobs:
         id: filter
         uses: dorny/paths-filter@v3
         with:
-          # Negated patterns: `code` is true when ANY changed file is NOT
-          # purely documentation/vault/gitignore. If every change matches one
-          # of these doc-class paths, `code` is false and heavy jobs skip.
+          # Negated patterns + `predicate-quantifier: every`: a file matches
+          # only when it satisfies ALL negations (i.e., is NOT in any of the
+          # doc-class paths). The default quantifier (`some`) would OR the
+          # patterns, treating any non-md path as a match — exactly wrong
+          # for skip-on-docs intent.
+          predicate-quantifier: every
           filters: |
             code:
               - '!**/*.md'
