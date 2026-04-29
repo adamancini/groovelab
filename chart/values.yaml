@@ -139,3 +139,21 @@ crdCheck:
     limits:
       cpu: 100m
       memory: 64Mi
+
+# auth — runtime knobs for the session/guest-access subsystem.
+# Mapped from KOTS Config items session_duration and guest_access in
+# release/helmchart.yaml; plain-helm installs use the safe defaults below.
+auth:
+  # sessionDuration controls how long an authenticated session lasts.
+  # Format: <number>h or <number>m, parsed by time.ParseDuration in the backend.
+  # KOTS Config item: session_duration (regex ^\d+[hm]$).
+  sessionDuration: "24h"
+  # guestAccess controls whether unauthenticated users can access flashcard
+  # learning routes. KOTS Config item: guest_access (bool).
+  guestAccess: true
+
+# flashcards — runtime knobs for the adaptive flashcard engine.
+flashcards:
+  # maxCardsPerSession caps how many flashcards are returned per BuildSession
+  # call. KOTS Config item: max_cards_per_session (regex ^\d+$).
+  maxCardsPerSession: 20

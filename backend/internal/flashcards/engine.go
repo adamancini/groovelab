@@ -68,8 +68,11 @@ func ClassifyCard(m *Mastery) Bucket {
 
 // BuildSession selects cards for an adaptive practice session.
 // cards is the full set of cards for the topic; masteryMap maps card_id to Mastery.
-// Returns up to SessionSize cards distributed across the four buckets.
-func BuildSession(cards []Card, masteryMap map[string]*Mastery) []SessionCard {
+// maxCards caps the number of returned cards; pass 0 (or negative) to use the
+// SessionSize default. Wired from KOTS Config item "max_cards_per_session"
+// via the MAX_CARDS_PER_SESSION env var. See GRO-7uiw.
+// Returns up to SessionSize (or maxCards) cards distributed across the four buckets.
+func BuildSession(cards []Card, masteryMap map[string]*Mastery, maxCards int) []SessionCard {
 	buckets := map[Bucket][]Card{
 		BucketNew:        {},
 		BucketStruggling: {},
@@ -144,6 +147,11 @@ func BuildSession(cards []Card, masteryMap map[string]*Mastery) []SessionCard {
 	rand.Shuffle(len(session), func(i, j int) {
 		session[i], session[j] = session[j], session[i]
 	})
+
+	// Apply maxCards cap if specified (KOTS Config: max_cards_per_session).
+	if maxCards > 0 && len(session) > maxCards {
+		session = session[:maxCards]
+	}
 
 	return session
 }
