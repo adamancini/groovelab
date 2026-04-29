@@ -103,9 +103,14 @@ spec:
             # flashcards.maxCardsPerSession, auth.guestAccess) via
             # release/helmchart.yaml. Plain-helm installs use chart defaults.
             # See GRO-7uiw.
+            # NOTE: do NOT use `| default X` here -- Go template's `default`
+            # treats boolean false / int 0 / empty string as zero values and
+            # would silently restore the chart default, ignoring operator
+            # overrides like --set auth.guestAccess=false. values.yaml already
+            # provides safe defaults; `| quote` alone is sufficient.
             - name: SESSION_DURATION
-              value: {{ .Values.auth.sessionDuration | default "24h" | quote }}
+              value: {{ .Values.auth.sessionDuration | quote }}
             - name: MAX_CARDS_PER_SESSION
-              value: {{ .Values.flashcards.maxCardsPerSession | default 20 | quote }}
+              value: {{ .Values.flashcards.maxCardsPerSession | quote }}
             - name: GUEST_ACCESS_ENABLED
-              value: {{ .Values.auth.guestAccess | default true | quote }}
+              value: {{ .Values.auth.guestAccess | quote }}
