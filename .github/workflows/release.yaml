@@ -227,7 +227,7 @@ jobs:
             --version "${{ env.K3S_VERSION }}" \
             --name "release-${{ env.VERSION }}" \
             --ttl 1h \
-            --wait 10m \
+            --wait 5m \
             --app "${{ env.APP_SLUG }}")
           CLUSTER_ID=$(echo "$CLUSTER_OUTPUT" | awk 'NR==2 {print $1}')
           echo "id=${CLUSTER_ID}" >> "$GITHUB_OUTPUT"
