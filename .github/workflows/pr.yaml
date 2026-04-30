@@ -41,6 +41,13 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
     steps:
+      # GRO-qrdt: per-job wall-clock timing. `id: job_start` is read by the
+      # final `Job timing summary` step. Step is intentionally first so the
+      # measurement covers the whole job, including checkout.
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -62,11 +69,51 @@ jobs:
               - '!.vault/knowledge/**'
               - '!.gitignore'
 
+      # GRO-qrdt: end-of-job timing summary. `if: always()` so failed/cancelled
+      # jobs still report. Falls back to "unknown" if epoch arithmetic fails so
+      # this step cannot fail the workflow (story AC6).
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
   # ── Lint and Test ─────────────────────────────────────────────────────────
   lint-test:
     name: Lint and Test
     runs-on: ubuntu-latest
     steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -125,17 +172,64 @@ jobs:
         working-directory: frontend
         run: npm run test
 
-  # ── Build, Push, and Sign Images ─────────────────────────────────────────
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  # ── Build, Push, and Sign Images (matrix: frontend || backend) ───────────
+  # GRO-fuxa: previously a single job that built+pushed+signed both images
+  # serially (~3.5m wall-clock). Split into a 2-leg matrix so the two images
+  # build in parallel runners (~1.8m wall-clock target). Each leg keeps its
+  # own buildx cache scope (GRO-i987) so the parallel legs don't thrash a
+  # shared `type=gha` cache.
   build-sign:
-    name: Build, Push, and Sign Images
+    name: Build, Push, and Sign (${{ matrix.service }})
     runs-on: ubuntu-latest
     needs: [detect-changes, lint-test]
     if: needs.detect-changes.outputs.code == 'true'
-    outputs:
-      frontend-digest: ${{ steps.build-frontend.outputs.digest }}
-      backend-digest: ${{ steps.build-backend.outputs.digest }}
-      image-tag: ${{ steps.meta.outputs.tag }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # cosign keyless signing via OIDC (per-leg)
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, backend]
     steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -155,43 +249,86 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Docker buildx caches scoped per-workflow (GRO-i987) so pr.yaml and
-      # release.yaml don't collide on shared keys, and per-image so frontend
-      # layer churn doesn't invalidate backend layers.
-      - name: Build and push frontend
-        id: build-frontend
+      # Per-image cache scope (GRO-i987) preserved under matrix: each leg
+      # has its own scope so frontend layer churn doesn't invalidate backend
+      # layers and vice versa.
+      - name: Build and push ${{ matrix.service }}
+        id: build
         uses: docker/build-push-action@v6
         with:
-          context: frontend/
+          context: ${{ matrix.service }}/
           platforms: linux/amd64
           push: true
-          tags: ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=frontend-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=frontend-${{ github.workflow }}
-
-      - name: Build and push backend
-        id: build-backend
-        uses: docker/build-push-action@v6
-        with:
-          context: backend/
-          platforms: linux/amd64
-          push: true
-          tags: ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=backend-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=backend-${{ github.workflow }}
+          tags: ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ github.workflow }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign frontend image
+      - name: Sign ${{ matrix.service }} image
         run: |
           cosign sign --yes \
-            "${{ env.GHCR_PREFIX }}/groovelab-frontend@${{ steps.build-frontend.outputs.digest }}"
+            "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}@${{ steps.build.outputs.digest }}"
 
-      - name: Sign backend image
+      # GRO-qrdt: per-job wall-clock timing summary (per matrix leg).
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }} (${{ matrix.service }})
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
         run: |
-          cosign sign --yes \
-            "${{ env.GHCR_PREFIX }}/groovelab-backend@${{ steps.build-backend.outputs.digest }}"
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  # ── Build-Sign Collector (output aggregation for matrix) ─────────────────
+  # GRO-fuxa: GitHub matrix-job outputs aren't directly addressable as
+  # `needs.build-sign.outputs.*` (they're per-leg, last-one-wins semantics).
+  # This collector job depends on both matrix legs (so it only runs when
+  # both succeed), and re-emits the deterministic image-tag as a single
+  # workflow-level output. Downstream `cmx-test` consumes it from here.
+  # See https://github.com/orgs/community/discussions/17245 for the canonical
+  # pattern.
+  build-sign-collect:
+    name: Collect build-sign outputs
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-sign]
+    if: needs.detect-changes.outputs.code == 'true'
+    outputs:
+      image-tag: ${{ steps.compute.outputs.tag }}
+    steps:
+      - name: Compute image tag (must match matrix legs)
+        id: compute
+        run: |
+          # Tag is deterministic from PR number + sha — recompute here instead
+          # of trying to thread per-leg outputs through a matrix job.
+          TAG="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA::7}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${TAG}"
 
   # ── Replicated Release and CMX Test ──────────────────────────────────────
   # Customer-grade install: per-PR channel + trial customer + ephemeral CMX
@@ -212,12 +349,19 @@ jobs:
   cmx-test:
     name: Replicated Release and CMX Test
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-sign]
+    # GRO-fuxa: consume image-tag from build-sign-collect aggregator (matrix
+    # job outputs aren't directly addressable). build-sign itself is also
+    # listed so cmx-test still gates on both matrix legs succeeding.
+    needs: [detect-changes, build-sign, build-sign-collect]
     if: needs.detect-changes.outputs.code == 'true'
     env:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
-      IMAGE_TAG: ${{ needs.build-sign.outputs.image-tag }}
+      IMAGE_TAG: ${{ needs.build-sign-collect.outputs.image-tag }}
     steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -412,7 +556,7 @@ jobs:
             --version "${K3S_VERSION}" \
             --name "$CLUSTER_NAME" \
             --ttl 1h \
-            --wait 10m \
+            --wait 5m \
             --app "${APP_SLUG}" \
             --output json)
           CLUSTER_ID=$(echo "$CLUSTER_JSON" \
@@ -753,4 +897,152 @@ jobs:
           if [ -n "$CLUSTER_ID" ]; then
             replicated cluster rm "$CLUSTER_ID" --app "${APP_SLUG}" || true
             echo "Cluster removal requested."
+          fi
+
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  # ── CI Timing Aggregator ─────────────────────────────────────────────────
+  # GRO-qrdt: posts a sticky PR comment summarizing per-job wall-clock time
+  # for this run. Reads timing data via the GitHub REST API (jobs endpoint
+  # gives us authoritative `started_at` / `completed_at` per job, including
+  # for failed/skipped jobs). Uses `gh api --paginate` so we don't miss jobs
+  # if the workflow ever grows past the default page size.
+  #
+  # The aggregator is observability-only: it must NEVER block PR merge. The
+  # post-comment step uses `continue-on-error: true` so a transient gh-API
+  # rate-limit or comment-permission glitch doesn't fail the run.
+  #
+  # Idempotent: finds an existing sticky comment by a hidden HTML marker
+  # (`<!-- gro-qrdt:ci-timing-summary -->`) and PATCHes it in place rather
+  # than posting a duplicate on every push.
+  ci-timing-comment:
+    name: CI Timing Summary
+    runs-on: ubuntu-latest
+    # GRO-fuxa: build-sign is now a matrix; ci-timing-comment fetches per-job
+    # timing via REST so it captures both matrix legs as separate rows.
+    # build-sign-collect is included so the aggregator runs after the
+    # collector resolves (and to prevent it racing past matrix completion).
+    needs: [detect-changes, lint-test, build-sign, build-sign-collect, cmx-test]
+    if: always() && github.event_name == 'pull_request'
+    permissions:
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Build and post sticky timing comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MARKER: "<!-- gro-qrdt:ci-timing-summary -->"
+        # continue-on-error: this step is observability-only; never gate merge.
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+
+          # Fetch all jobs for this run. Filter out the aggregator itself so
+          # the comment doesn't show its own (still-running) duration.
+          gh api --paginate "repos/${REPO}/actions/runs/${RUN_ID}/jobs" \
+            --jq '.jobs[] | select(.name != "CI Timing Summary")' \
+            > /tmp/jobs.ndjson
+
+          # Compute per-job durations + emoji + total wall-clock.
+          # `started_at` and `completed_at` are RFC3339; jq's `fromdate`
+          # parses both. `select(.completed_at != null)` skips jobs that
+          # haven't completed yet (shouldn't happen with `needs:` + `always()`
+          # but defensive).
+          {
+            echo "${MARKER}"
+            echo "## CI Timing Summary"
+            echo ""
+            echo "| Job | Duration | Status |"
+            echo "|---|---|---|"
+            jq -rs '
+              .[]
+              | select(.completed_at != null)
+              | . as $j
+              | (((.completed_at | fromdate) - (.started_at | fromdate)) | floor) as $dur
+              | (($dur / 60) | floor) as $m
+              | ($dur % 60) as $s
+              | (
+                  if .conclusion == "success" then ":white_check_mark:"
+                  elif .conclusion == "failure" then ":x:"
+                  elif .conclusion == "cancelled" then ":no_entry_sign:"
+                  elif .conclusion == "skipped" then ":fast_forward:"
+                  else ":hourglass:"
+                  end
+                ) as $emoji
+              | "| \(.name) | \($m)m \($s)s | \($emoji) \(.conclusion // .status) |"
+            ' /tmp/jobs.ndjson
+
+            # Total wall-clock = sum of completed-job durations. After
+            # GRO-fuxa landed (matrix split of build-sign into frontend +
+            # backend legs), this sum overcounts wall-clock by ~1 leg's
+            # duration when both legs run in parallel — i.e., the printed
+            # "Total" is now an upper bound, not the true critical path.
+            # The per-leg rows above show the actual wall-clock contribution.
+            # Switching this to max(parallel_group) + sequential is a future
+            # cleanup; for now the per-row durations are the source of truth.
+            TOTAL=$(jq -s '
+              [.[]
+               | select(.completed_at != null)
+               | (((.completed_at | fromdate) - (.started_at | fromdate)) | floor)
+              ] | add // 0
+            ' /tmp/jobs.ndjson)
+            TM=$((TOTAL / 60))
+            TS=$((TOTAL % 60))
+            echo "| **Total wall-clock** | **${TM}m ${TS}s** | -- |"
+            echo ""
+            echo "<sub>Total = sum of job durations (linear DAG). When parallel jobs land, this becomes longest-path. Updated on every push to this PR. Source: GRO-qrdt.</sub>"
+          } > /tmp/comment.md
+
+          # Find existing sticky comment by marker (hidden HTML comment in body).
+          EXISTING_ID=$(gh api --paginate \
+            "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq ".[] | select(.body | contains(\"${MARKER}\")) | .id" \
+            | head -1)
+
+          BODY=$(cat /tmp/comment.md)
+          if [ -n "$EXISTING_ID" ]; then
+            echo "Updating existing comment ${EXISTING_ID}"
+            gh api --method PATCH \
+              "repos/${REPO}/issues/comments/${EXISTING_ID}" \
+              -f body="$BODY"
+          else
+            echo "Posting new comment to PR ${PR_NUMBER}"
+            gh api --method POST \
+              "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              -f body="$BODY"
           fi

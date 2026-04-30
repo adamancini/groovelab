@@ -17,15 +17,27 @@ env:
   K3S_VERSION: "1.32"
 
 jobs:
-  # ── Build, Push, and Sign Images ─────────────────────────────────────────
+  # ── Build, Push, and Sign Images (matrix: frontend || backend) ───────────
+  # GRO-fuxa: split serial frontend+backend build into a 2-leg matrix so they
+  # run in parallel runners. Mirrors the pr.yaml refactor. Each leg keeps
+  # its own buildx cache scope (GRO-i987).
   build-sign:
-    name: Build, Push, and Sign Images
+    name: Build, Push, and Sign (${{ matrix.service }})
     runs-on: ubuntu-latest
-    outputs:
-      frontend-digest: ${{ steps.build-frontend.outputs.digest }}
-      backend-digest: ${{ steps.build-backend.outputs.digest }}
-      version: ${{ steps.meta.outputs.version }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # cosign keyless signing via OIDC (per-leg)
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, backend]
     steps:
+      # GRO-qrdt: per-job wall-clock timing.
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -47,59 +59,100 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Docker buildx caches scoped per-workflow (GRO-i987) so pr.yaml and
-      # release.yaml don't collide on shared keys, and per-image so frontend
-      # layer churn doesn't invalidate backend layers.
-      - name: Build and push frontend
-        id: build-frontend
+      # Per-image cache scope (GRO-i987) preserved under matrix.
+      - name: Build and push ${{ matrix.service }}
+        id: build
         uses: docker/build-push-action@v6
         with:
-          context: frontend/
+          context: ${{ matrix.service }}/
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ steps.meta.outputs.version }}
-            ${{ env.GHCR_PREFIX }}/groovelab-frontend:latest
-          cache-from: type=gha,scope=frontend-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=frontend-${{ github.workflow }}
-
-      - name: Build and push backend
-        id: build-backend
-        uses: docker/build-push-action@v6
-        with:
-          context: backend/
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ steps.meta.outputs.version }}
-            ${{ env.GHCR_PREFIX }}/groovelab-backend:latest
-          cache-from: type=gha,scope=backend-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=backend-${{ github.workflow }}
+            ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.version }}
+            ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:latest
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ github.workflow }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign frontend image
+      - name: Sign ${{ matrix.service }} image
         run: |
           cosign sign --yes \
-            "${{ env.GHCR_PREFIX }}/groovelab-frontend@${{ steps.build-frontend.outputs.digest }}"
+            "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}@${{ steps.build.outputs.digest }}"
 
-      - name: Sign backend image
+      # GRO-qrdt: per-job wall-clock timing summary (per matrix leg).
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }} (${{ matrix.service }})
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
         run: |
-          cosign sign --yes \
-            "${{ env.GHCR_PREFIX }}/groovelab-backend@${{ steps.build-backend.outputs.digest }}"
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  # ── Build-Sign Collector (output aggregation for matrix) ─────────────────
+  # GRO-fuxa: matrix-job outputs aren't directly addressable as
+  # `needs.build-sign.outputs.*`. The collector depends on both matrix legs
+  # (so it only runs when both succeed) and re-emits the workflow-scoped
+  # `version` output that downstream `release-unstable` and `promote-stable`
+  # consume. Version is just GITHUB_REF_NAME (the pushed tag), so we
+  # recompute deterministically here.
+  build-sign-collect:
+    name: Collect build-sign outputs
+    runs-on: ubuntu-latest
+    needs: build-sign
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Compute version from tag
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Release version: ${VERSION}"
 
   # ── Release to Unstable and Test ─────────────────────────────────────────
   release-unstable:
     name: Release to Unstable and Test
     runs-on: ubuntu-latest
-    needs: build-sign
+    # GRO-fuxa: build-sign is now matrix; consume version from the collector.
+    # build-sign is also in `needs:` so this job still gates on both legs.
+    needs: [build-sign, build-sign-collect]
     env:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
-      VERSION: ${{ needs.build-sign.outputs.version }}
+      VERSION: ${{ needs.build-sign-collect.outputs.version }}
     outputs:
       release-sequence: ${{ steps.release.outputs.sequence }}
     steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -227,7 +280,7 @@ jobs:
             --version "${{ env.K3S_VERSION }}" \
             --name "release-${{ env.VERSION }}" \
             --ttl 1h \
-            --wait 10m \
+            --wait 5m \
             --app "${{ env.APP_SLUG }}")
           CLUSTER_ID=$(echo "$CLUSTER_OUTPUT" | awk 'NR==2 {print $1}')
           echo "id=${CLUSTER_ID}" >> "$GITHUB_OUTPUT"
@@ -462,11 +515,48 @@ jobs:
             echo "Cluster removal requested."
           fi
 
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
   # ── Promote to Stable ────────────────────────────────────────────────────
   promote-stable:
     name: Promote to Stable
     runs-on: ubuntu-latest
-    needs: [build-sign, release-unstable]
+    # GRO-fuxa: read version from build-sign-collect (matrix job outputs
+    # aren't directly addressable). build-sign is still in `needs:` so this
+    # job still gates on both matrix legs succeeding.
+    needs: [build-sign, build-sign-collect, release-unstable]
     # Belt-and-suspenders guard: only run for clean SemVer tags (e.g. v1.2.3).
     # Skips dev/throwaway tags like v9.9.9-seq-fix-1, v0.1.1-dev, v1.2.3-rc.1,
     # v1.2.3+build.5 so they never auto-publish to Stable even if the
@@ -481,8 +571,12 @@ jobs:
     environment: production
     env:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
-      VERSION: ${{ needs.build-sign.outputs.version }}
+      VERSION: ${{ needs.build-sign-collect.outputs.version }}
     steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Install Replicated CLI
         run: |
           curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
@@ -517,3 +611,37 @@ jobs:
           echo "    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \\"
           echo "    ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ env.VERSION }}"
           echo "================================================================"
+
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
