@@ -254,7 +254,7 @@ jobs:
       # layers and vice versa.
       - name: Build and push ${{ matrix.service }}
         id: build
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.service }}/
           platforms: linux/amd64
