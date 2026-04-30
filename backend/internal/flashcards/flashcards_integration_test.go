@@ -949,9 +949,17 @@ func TestAdaptiveEngine_BuildSession_RespectsDistribution(t *testing.T) {
 		}
 	}
 
-	session := flashcards.BuildSession(cards, masteryMap)
+	session := flashcards.BuildSession(cards, masteryMap, 0)
 	assert.Equal(t, flashcards.SessionSize, len(session),
 		"session should have exactly %d cards", flashcards.SessionSize)
+
+	// Sanity-check the maxCards cap: with maxCards=5, BuildSession should
+	// return at most 5 cards even when SessionSize would otherwise yield 20.
+	// Wired from KOTS Config item "max_cards_per_session" (GRO-7uiw).
+	capped := flashcards.BuildSession(cards, masteryMap, 5)
+	assert.LessOrEqual(t, len(capped), 5,
+		"BuildSession with maxCards=5 must respect the cap (got %d)", len(capped))
+	assert.Greater(t, len(capped), 0, "capped session should still contain cards")
 
 	// Count bucket distribution.
 	buckets := map[string]int{}

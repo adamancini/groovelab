@@ -22,6 +22,11 @@ spec:
     features:
       trackExport:
         enabled: '{{repl LicenseFieldValue "track_export_enabled"}}'
+    auth:
+      sessionDuration: '{{repl ConfigOption "session_duration"}}'
+      guestAccess: '{{repl ConfigOptionEquals "guest_access" "1"}}'
+    flashcards:
+      maxCardsPerSession: '{{repl ConfigOption "max_cards_per_session"}}'
   optionalValues:
     - when: '{{repl ne (LicenseFieldValue "track_export_enabled") ""}}'
       recursiveMerge: true
@@ -29,3 +34,16 @@ spec:
         features:
           trackExport:
             enabled: '{{repl LicenseFieldValue "track_export_enabled"}}'
+    # External-database mapping is gated on db_type=external so plain-helm
+    # installs (where ConfigOption returns empty) keep the embedded CNPG path.
+    - when: '{{repl ConfigOptionEquals "db_type" "external"}}'
+      recursiveMerge: true
+      values:
+        cnpg:
+          createCluster: false
+        externalDatabase:
+          host: '{{repl ConfigOption "external_db_host"}}'
+          port: '{{repl ConfigOption "external_db_port"}}'
+          username: '{{repl ConfigOption "external_db_user"}}'
+          password: '{{repl ConfigOption "external_db_password"}}'
+          sslMode: '{{repl ConfigOption "external_db_ssl_mode"}}'

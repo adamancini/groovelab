@@ -49,6 +49,15 @@ chart-deps: ## Update chart dependencies (runs `helm dependency update`)
 chart-lint: ## Run `helm lint` on the chart
 	helm lint $(CHART_DIR)
 
+chart-test-overrides: chart-deps ## Regression: verify --set overrides for guestAccess/sessionDuration/maxCardsPerSession render through (no `| default` footgun). See GRO-7uiw.
+	@echo "[chart-test-overrides] auth.guestAccess=false ..."
+	@helm template $(CHART_DIR) --set auth.guestAccess=false 2>/dev/null | grep -A1 'GUEST_ACCESS_ENABLED' | grep -q '"false"' || { echo "FAIL: auth.guestAccess=false did not render '\"false\"'"; exit 1; }
+	@echo "[chart-test-overrides] auth.sessionDuration=1h ..."
+	@helm template $(CHART_DIR) --set auth.sessionDuration=1h 2>/dev/null | grep -A1 'SESSION_DURATION' | grep -q '"1h"' || { echo "FAIL: auth.sessionDuration=1h did not render '\"1h\"'"; exit 1; }
+	@echo "[chart-test-overrides] flashcards.maxCardsPerSession=5 ..."
+	@helm template $(CHART_DIR) --set flashcards.maxCardsPerSession=5 2>/dev/null | grep -A1 'MAX_CARDS_PER_SESSION' | grep -q '"5"' || { echo "FAIL: flashcards.maxCardsPerSession=5 did not render '\"5\"'"; exit 1; }
+	@echo "OK: all three operator overrides render through to backend Deployment env."
+
 chart-package: chart-deps ## Package chart/ into dist/groovelab-<version>.tgz (reads version from Chart.yaml)
 	@mkdir -p $(DIST_DIR)
 	helm package $(CHART_DIR) --destination $(DIST_DIR)

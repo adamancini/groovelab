@@ -1,0 +1,107 @@
+apiVersion: kots.io/v1beta1
+kind: Config
+metadata:
+  name: groovelab
+spec:
+  groups:
+    - name: database
+      title: Database
+      description: Configure the PostgreSQL database connection.
+      items:
+        - name: db_type
+          title: Database Type
+          help_text: |
+            Select "Embedded" to use the bundled CloudNativePG operator (default), or
+            "External" to connect Groovelab to your own PostgreSQL instance.
+          type: select_one
+          default: embedded
+          items:
+            - name: embedded
+              title: Embedded (CloudNativePG)
+            - name: external
+              title: External PostgreSQL
+
+        - name: external_db_host
+          title: External DB Host
+          help_text: Hostname or IP address of your external PostgreSQL server. Required when Database Type is External.
+          type: text
+          when: '{{repl ConfigOptionEquals "db_type" "external"}}'
+          required: true
+          validation:
+            regex:
+              pattern: '^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*|(\d{1,3}\.){3}\d{1,3})$'
+              message: Must be a valid hostname (e.g. db.example.com) or IPv4 address (e.g. 10.0.0.5).
+
+        - name: external_db_port
+          title: External DB Port
+          help_text: Port number for your external PostgreSQL server. Default is 5432.
+          type: text
+          when: '{{repl ConfigOptionEquals "db_type" "external"}}'
+          default: "5432"
+          validation:
+            regex:
+              pattern: '^\d{1,5}$'
+              message: Must be a valid port number (1-65535).
+
+        - name: external_db_user
+          title: External DB Username
+          help_text: PostgreSQL username with privileges on the groovelab database.
+          type: text
+          when: '{{repl ConfigOptionEquals "db_type" "external"}}'
+          default: groovelab
+
+        - name: external_db_password
+          title: External DB Password
+          help_text: |
+            PostgreSQL password. A random 24-character value is generated on first install
+            and persists across upgrades (the Admin Console retains the value across
+            reconfigure / upgrade events).
+          type: password
+          when: '{{repl ConfigOptionEquals "db_type" "external"}}'
+          default: '{{repl RandomString 24}}'
+
+        - name: external_db_ssl_mode
+          title: External DB SSL Mode
+          help_text: SSL mode for connecting to external PostgreSQL (disable, require, verify-ca, verify-full).
+          type: text
+          when: '{{repl ConfigOptionEquals "db_type" "external"}}'
+          default: require
+
+    - name: app
+      title: Application Settings
+      description: Configure runtime behaviour of the Groovelab learning experience.
+      items:
+        - name: session_duration
+          title: Session Duration
+          help_text: "Session timeout duration. Format: <number>h or <number>m (e.g. 24h, 120m)."
+          type: text
+          default: "24h"
+          required: true
+          validation:
+            regex:
+              pattern: '^\d+[hm]$'
+              message: "Must be a number followed by h (hours) or m (minutes), e.g. 24h or 120m."
+
+        - name: max_cards_per_session
+          title: Max Cards Per Session
+          help_text: Maximum number of flashcards to include in each adaptive learning session.
+          type: text
+          default: "20"
+          required: true
+          validation:
+            regex:
+              pattern: '^\d+$'
+              message: Must be a positive integer.
+
+        - name: guest_access
+          title: Enable Guest Access
+          help_text: Allow unauthenticated users to access flashcard learning features without signing in.
+          type: bool
+          default: "1"
+
+        - name: track_export
+          title: Enable Track Export
+          help_text: Allow users to export their practice tracks. Requires the track_export_enabled license entitlement.
+          type: bool
+          when: '{{repl LicenseFieldValue "track_export_enabled"}}'
+          default: '{{repl LicenseFieldValue "track_export_enabled"}}'

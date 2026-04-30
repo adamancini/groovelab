@@ -4,12 +4,30 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 
 	"github.com/aarondl/authboss/v3"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// maxCardsPerSession reads MAX_CARDS_PER_SESSION env var. Falls back to
+// SessionSize (20) if unset, non-numeric, or non-positive. Wired from the
+// KOTS Config item "max_cards_per_session" via the backend Deployment.
+// See GRO-7uiw.
+func maxCardsPerSession() int {
+	raw := os.Getenv("MAX_CARDS_PER_SESSION")
+	if raw == "" {
+		return SessionSize
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return SessionSize
+	}
+	return n
+}
 
 // Handler provides HTTP endpoints for the flashcard engine.
 type Handler struct {
@@ -152,7 +170,7 @@ func (h *Handler) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// For guests, masteryMap is empty (all cards are "new").
 
-	session := BuildSession(cards, masteryMap)
+	session := BuildSession(cards, masteryMap, maxCardsPerSession())
 	sessionID := uuid.New().String()
 
 	// Store session state in memory for BOTH guest and authenticated users.

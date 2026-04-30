@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -22,11 +23,28 @@ type SessionConfig struct {
 	Secure     bool // set true when behind TLS
 }
 
-// DefaultSessionConfig returns production-safe defaults.
+// parseSessionDuration reads SESSION_DURATION env var (e.g., "24h", "120m")
+// and falls back to 24h if unset or invalid. Wired through the KOTS Config
+// item "session_duration" via chart/templates/backend/deployment.yaml.
+// See GRO-7uiw.
+func parseSessionDuration() time.Duration {
+	raw := os.Getenv("SESSION_DURATION")
+	if raw == "" {
+		return 24 * time.Hour
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 24 * time.Hour
+	}
+	return d
+}
+
+// DefaultSessionConfig returns production-safe defaults. The TTL honours
+// SESSION_DURATION when set (KOTS Config item "session_duration").
 func DefaultSessionConfig() SessionConfig {
 	return SessionConfig{
 		CookieName: "groovelab_session",
-		TTL:        24 * time.Hour,
+		TTL:        parseSessionDuration(),
 		Secure:     false,
 	}
 }

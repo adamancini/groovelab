@@ -174,10 +174,17 @@ func main() {
 		adminHandler.MountRoutes(r)
 	})
 
-	// Flashcard routes (auth optional -- guests can play without persistence).
+	// Flashcard routes. Auth is conditional: when GUEST_ACCESS_ENABLED=true
+	// (the default, controlled by KOTS Config item "guest_access"), guests
+	// can play without persistence. When the operator disables guest access,
+	// ConditionalAuth returns RequireAuth and unauthenticated requests get
+	// 401. See GRO-7uiw.
 	flashcardStore := flashcards.NewStore(dbPool)
 	flashcardHandler := flashcards.NewHandler(flashcardStore, authSystem.AB)
-	flashcardHandler.MountRoutes(r, "/api/v1/flashcards")
+	r.Group(func(r chi.Router) {
+		r.Use(grooveauth.ConditionalAuth(authSystem.AB))
+		flashcardHandler.MountRoutes(r, "/api/v1/flashcards")
+	})
 	log.Println("flashcard routes mounted")
 
 	// Start server.

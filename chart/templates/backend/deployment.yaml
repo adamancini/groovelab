@@ -98,3 +98,19 @@ spec:
               value: "6379"
             - name: APP_VERSION
               value: {{ .Chart.AppVersion | default "0.1.0" | quote }}
+            # SESSION_DURATION/MAX_CARDS_PER_SESSION/GUEST_ACCESS_ENABLED are
+            # populated from KOTS Config items (auth.sessionDuration,
+            # flashcards.maxCardsPerSession, auth.guestAccess) via
+            # release/helmchart.yaml. Plain-helm installs use chart defaults.
+            # See GRO-7uiw.
+            # NOTE: do NOT use `| default X` here -- Go template's `default`
+            # treats boolean false / int 0 / empty string as zero values and
+            # would silently restore the chart default, ignoring operator
+            # overrides like --set auth.guestAccess=false. values.yaml already
+            # provides safe defaults; `| quote` alone is sufficient.
+            - name: SESSION_DURATION
+              value: {{ .Values.auth.sessionDuration | quote }}
+            - name: MAX_CARDS_PER_SESSION
+              value: {{ .Values.flashcards.maxCardsPerSession | quote }}
+            - name: GUEST_ACCESS_ENABLED
+              value: {{ .Values.auth.guestAccess | quote }}
