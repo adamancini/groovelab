@@ -27,6 +27,7 @@ CHART_VERSION := $(shell yq -r '.version' $(CHART_DIR)/Chart.yaml)
 CHART_TGZ := $(DIST_DIR)/$(APP_SLUG)-$(CHART_VERSION).tgz
 
 .PHONY: help chart-deps chart-package chart-lint release-unstable clean-dist \
+        chart-test-overrides chart-test-config-mapping \
         pr-slug pr-channel pr-customer pr-cluster pr-install pr-test pr-teardown \
         _require-version _require-token _require-not-main
 
@@ -57,6 +58,58 @@ chart-test-overrides: chart-deps ## Regression: verify --set overrides for guest
 	@echo "[chart-test-overrides] flashcards.maxCardsPerSession=5 ..."
 	@helm template $(CHART_DIR) --set flashcards.maxCardsPerSession=5 2>/dev/null | grep -A1 'MAX_CARDS_PER_SESSION' | grep -q '"5"' || { echo "FAIL: flashcards.maxCardsPerSession=5 did not render '\"5\"'"; exit 1; }
 	@echo "OK: all three operator overrides render through to backend Deployment env."
+
+chart-test-config-mapping: chart-deps ## Tier 5: verify release/config.yaml -> release/helmchart.yaml -> chart values mapping integrity (Layer 1 e2e). See GRO-hznr.
+	@echo "[chart-test-config-mapping] release/config.yaml present and well-formed ..."
+	@test -f release/config.yaml || { echo "FAIL: release/config.yaml missing"; exit 1; }
+	@yq -e '.kind == "Config"' release/config.yaml >/dev/null || { echo "FAIL: release/config.yaml is not kind: Config"; exit 1; }
+	@echo "[chart-test-config-mapping] session_duration regex pattern ^\\d+[hm]\$$ ..."
+	@yq -e '.spec.groups[] | select(.name=="app") | .items[] | select(.name=="session_duration") | .validation.regex.pattern == "^\\d+[hm]$$"' release/config.yaml >/dev/null \
+		|| { echo "FAIL: session_duration regex pattern missing or wrong in release/config.yaml"; exit 1; }
+	@echo "[chart-test-config-mapping] max_cards_per_session regex pattern ^\\d+\$$ ..."
+	@yq -e '.spec.groups[] | select(.name=="app") | .items[] | select(.name=="max_cards_per_session") | .validation.regex.pattern == "^\\d+$$"' release/config.yaml >/dev/null \
+		|| { echo "FAIL: max_cards_per_session regex pattern missing or wrong in release/config.yaml"; exit 1; }
+	@echo "[chart-test-config-mapping] external_db_password uses RandomString 24 (generated default that survives upgrade) ..."
+	@yq -e '.spec.groups[] | select(.name=="database") | .items[] | select(.name=="external_db_password") | .default == "{{repl RandomString 24}}"' release/config.yaml >/dev/null \
+		|| { echo "FAIL: external_db_password default is not '{{repl RandomString 24}}' in release/config.yaml"; exit 1; }
+	@echo "[chart-test-config-mapping] release/helmchart.yaml maps session_duration -> auth.sessionDuration ..."
+	@yq -e '.spec.values.auth.sessionDuration == "{{repl ConfigOption \"session_duration\"}}"' release/helmchart.yaml >/dev/null \
+		|| { echo "FAIL: helmchart.yaml does not map session_duration to auth.sessionDuration"; exit 1; }
+	@echo "[chart-test-config-mapping] release/helmchart.yaml maps guest_access -> auth.guestAccess (bool via ConfigOptionEquals) ..."
+	@yq -e '.spec.values.auth.guestAccess == "{{repl ConfigOptionEquals \"guest_access\" \"1\"}}"' release/helmchart.yaml >/dev/null \
+		|| { echo "FAIL: helmchart.yaml does not map guest_access to auth.guestAccess"; exit 1; }
+	@echo "[chart-test-config-mapping] release/helmchart.yaml maps max_cards_per_session -> flashcards.maxCardsPerSession ..."
+	@yq -e '.spec.values.flashcards.maxCardsPerSession == "{{repl ConfigOption \"max_cards_per_session\"}}"' release/helmchart.yaml >/dev/null \
+		|| { echo "FAIL: helmchart.yaml does not map max_cards_per_session to flashcards.maxCardsPerSession"; exit 1; }
+	@echo "[chart-test-config-mapping] external-DB optionalValues block is gated on db_type=external ..."
+	@yq -e '[.spec.optionalValues[] | select(.when == "{{repl ConfigOptionEquals \"db_type\" \"external\"}}")] | length == 1' release/helmchart.yaml >/dev/null \
+		|| { echo "FAIL: helmchart.yaml lacks an optionalValues entry gated on db_type=external"; exit 1; }
+	@echo "[chart-test-config-mapping] external-DB optionalValues maps cnpg.createCluster=false + externalDatabase.password ..."
+	@yq -e '.spec.optionalValues[] | select(.when == "{{repl ConfigOptionEquals \"db_type\" \"external\"}}") | .values.cnpg.createCluster == false' release/helmchart.yaml >/dev/null \
+		|| { echo "FAIL: external-DB optionalValues does not set cnpg.createCluster: false"; exit 1; }
+	@yq -e '.spec.optionalValues[] | select(.when == "{{repl ConfigOptionEquals \"db_type\" \"external\"}}") | .values.externalDatabase.password == "{{repl ConfigOption \"external_db_password\"}}"' release/helmchart.yaml >/dev/null \
+		|| { echo "FAIL: external-DB optionalValues does not pass external_db_password through to externalDatabase.password"; exit 1; }
+	@echo "[chart-test-config-mapping] cnpg.createCluster=false skips the postgresql.cnpg.io/v1 Cluster manifest ..."
+	@if helm template $(CHART_DIR) --set cnpg.createCluster=true 2>/dev/null | grep -q '^kind: Cluster$$'; then \
+		echo "  cnpg.createCluster=true does emit a Cluster manifest (baseline OK)"; \
+	else \
+		echo "FAIL: baseline cnpg.createCluster=true did not emit a Cluster manifest -- chart shape changed"; exit 1; \
+	fi
+	@if helm template $(CHART_DIR) --set cnpg.createCluster=false 2>/dev/null | grep -q '^kind: Cluster$$'; then \
+		echo "FAIL: cnpg.createCluster=false still emitted a postgresql.cnpg.io Cluster manifest"; exit 1; \
+	else \
+		echo "  cnpg.createCluster=false correctly skips the Cluster manifest"; \
+	fi
+	@echo "[chart-test-config-mapping] external-DB --set overrides flow into rendered preflight collectors ..."
+	@helm template $(CHART_DIR) \
+		--set cloudnative-pg.enabled=false \
+		--set cnpg.createCluster=false \
+		--set externalDatabase.host=db.example.com \
+		--set externalDatabase.port=5433 \
+		--set externalDatabase.username=ext_user \
+		2>/dev/null | grep -q 'db.example.com' \
+		|| { echo "FAIL: externalDatabase.host=db.example.com did not flow into rendered preflight manifests"; exit 1; }
+	@echo "OK: config.yaml -> helmchart.yaml -> chart values mapping is intact and renders through."
 
 chart-package: chart-deps ## Package chart/ into dist/groovelab-<version>.tgz (reads version from Chart.yaml)
 	@mkdir -p $(DIST_DIR)
