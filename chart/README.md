@@ -378,7 +378,7 @@ namespace layer:
 | Cluster-shared infra (CNPG operator, cert-manager) | per-cluster | global on the cluster |
 | Per-PR namespace `groovelab-pr-<slug>` | per-PR (until PR close) | per-PR |
 | Per-PR Replicated channel `<slug>` | per-PR | per-PR |
-| Per-PR trial customer `pr-<slug>` | per-PR (24h trial expiry) | per-PR |
+| Per-PR dev customer `pr-<slug>` | per-PR (no expiration; archived on PR close) | per-PR |
 
 Lookup-or-create flow (in pseudo-shell):
 
@@ -394,9 +394,20 @@ else
   NEED_INFRA_INSTALL=false  # reuse — operators already installed
 fi
 
+# When NEED_INFRA_INSTALL=true: pre-install BOTH CNPG and cert-manager into
+# their own cluster-shared releases (`cnpg-operator` in `cnpg-system`,
+# `cert-manager` in `cert-manager`). Their CRDs are cluster-scoped, so per-PR
+# helm installs MUST disable the embedded subcharts (`--set
+# cloudnative-pg.enabled=false --set cert-manager.enabled=false`); otherwise
+# the second PR collides with Helm's CRD ownership annotations and fails
+# with `meta.helm.sh/release-namespace must equal "<ns-2>": current value
+# is "<ns-1>"`.
 NAMESPACE="groovelab-pr-${SLUG}"
 kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
-helm install groovelab oci://... --namespace "$NAMESPACE" --create-namespace ...
+helm install groovelab oci://... \
+  --namespace "$NAMESPACE" --create-namespace \
+  --set cloudnative-pg.enabled=false \
+  --set cert-manager.enabled=false
 ```
 
 PR close (`pr-cleanup.yaml`) removes only the namespace + customer + channel.
@@ -427,11 +438,12 @@ make pr-slug
 
 # End-to-end (requires REPLICATED_API_TOKEN exported):
 #   1. create or reuse the per-branch Replicated channel
-#   2. create or reuse the trial customer licensed to that channel
+#   2. create or reuse the dev customer licensed to that channel (no expiration)
 #   3. lookup-or-create the shared `groovelab-ci` cluster (TTL 24h)
 #   4. ensure namespace `groovelab-pr-<slug>` exists
-#   5. install CNPG operator (only if cluster was freshly provisioned)
+#   5. pre-install CNPG operator + cert-manager (only if cluster was freshly provisioned)
 #   6. package the chart, release it, helm install via OCI w/ license injection
+#      (cloudnative-pg + cert-manager subcharts disabled — operators are cluster-shared)
 #   7. run smoke tests (/healthz 200, /flashcards/answer 404)
 make pr-test
 

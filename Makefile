@@ -131,7 +131,7 @@ _require-not-main:
 # Flow (mirrors pr.yaml step numbering):
 #   pr-slug      — print normalized slug for current branch (no side effects)
 #   pr-channel   — create or reuse per-PR channel (idempotent)
-#   pr-customer  — create or reuse trial customer licensed to the channel
+#   pr-customer  — create or reuse dev customer licensed to the channel
 #   pr-cluster   — provision a fresh CMX k3s cluster (1h TTL, per-run name)
 #   pr-install   — package chart, release on per-PR channel, helm install via OCI
 #   pr-test      — composite: channel + customer + cluster + install + smoke
@@ -183,19 +183,19 @@ pr-channel: _require-token ## Create or reuse the per-PR channel (idempotent)
 	  echo "OK: channel $$SLUG created (ID: $$CHANNEL_ID)"; \
 	fi
 
-pr-customer: _require-token pr-channel ## Create or reuse the trial customer licensed to the per-PR channel
+pr-customer: _require-token pr-channel ## Create or reuse the dev customer licensed to the per-PR channel
 	@set -euo pipefail; \
 	SLUG="$(PR_SLUG)"; \
 	NAME="$(PR_CUSTOMER_NAME)"; \
-	echo "==> Customer for slug: $$SLUG (name: $$NAME)"; \
+	echo "==> Dev customer for slug: $$SLUG (name: $$NAME)"; \
 	EXISTING=$$(replicated customer ls --app "$(APP_SLUG)" --output json \
 	  | jq -r --arg n "$$NAME" '.[] | select(.name == $$n) | .installationId // empty'); \
 	if [ -n "$$EXISTING" ]; then \
-	  echo "OK: reusing customer $$NAME"; \
+	  echo "OK: reusing dev customer $$NAME"; \
 	else \
 	  CUSTOMER_JSON=$$(replicated customer create \
 	    --name "$$NAME" --email "pr+$$SLUG@replicated.com" \
-	    --channel "$$SLUG" --type trial --expires-in 24h \
+	    --channel "$$SLUG" --type dev \
 	    --app "$(APP_SLUG)" --output json); \
 	  LICENSE_ID=$$(echo "$$CUSTOMER_JSON" \
 	    | jq -r --arg n "$$NAME" 'if type == "array" then (.[] | select(.name == $$n) | .installationId // empty) else (.installationId // .customer.installationId // empty) end' \
@@ -204,7 +204,7 @@ pr-customer: _require-token pr-channel ## Create or reuse the trial customer lic
 	    LICENSE_ID=$$(replicated customer ls --app "$(APP_SLUG)" --output json \
 	      | jq -r --arg n "$$NAME" '.[] | select(.name == $$n) | .installationId'); \
 	  fi; \
-	  echo "OK: customer $$NAME created"; \
+	  echo "OK: dev customer $$NAME created (no expiration)"; \
 	fi
 
 pr-cluster: _require-token _require-not-main ## Lookup-or-create the shared CMX cluster `groovelab-ci` (TTL 24h) and write per-run state
@@ -279,14 +279,20 @@ pr-install: _require-token _require-not-main pr-channel pr-customer ## Package c
 	  --yaml-dir $(RELEASE_DIR) --promote "$$SLUG" \
 	  --version "$$CHART_VERSION" --app "$(APP_SLUG)" --output json >/dev/null; \
 	if [ "$$NEED_INFRA_INSTALL" = "true" ]; then \
-	  echo "==> Pre-installing CNPG operator (fresh cluster)"; \
-	  (cd $(CHART_DIR)/charts && for f in cloudnative-pg-*.tgz; do \
+	  echo "==> Pre-installing cluster-shared infra (CNPG + cert-manager) on fresh cluster"; \
+	  (cd $(CHART_DIR)/charts && for f in cloudnative-pg-*.tgz cert-manager-*.tgz; do \
 	     [ -f "$$f" ] && [ ! -d "$${f%.tgz}" ] && tar xzf "$$f" || true; \
 	   done); \
 	  helm upgrade --install cnpg-operator $(CHART_DIR)/charts/cloudnative-pg \
 	    --namespace cnpg-system --create-namespace --wait --timeout 3m; \
+	  CM_DIR=$$(ls -d $(CHART_DIR)/charts/cert-manager-* 2>/dev/null | head -1); \
+	  if [ -z "$$CM_DIR" ] || [ ! -d "$$CM_DIR" ]; then CM_DIR="$(CHART_DIR)/charts/cert-manager"; fi; \
+	  helm upgrade --install cert-manager "$$CM_DIR" \
+	    --namespace cert-manager --create-namespace \
+	    --set crds.enabled=true \
+	    --wait --timeout 3m; \
 	else \
-	  echo "==> Reusing shared cluster — skipping CNPG operator install."; \
+	  echo "==> Reusing shared cluster — skipping CNPG + cert-manager pre-install."; \
 	fi; \
 	echo "==> Ensuring per-PR namespace $$NAMESPACE exists"; \
 	kubectl create namespace "$$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -; \
@@ -306,7 +312,8 @@ pr-install: _require-token _require-not-main pr-channel pr-customer ## Package c
 	helm upgrade --install "$(APP_SLUG)" "$$OCI_URL" \
 	  --version "$$CHART_VERSION" \
 	  --namespace "$$NAMESPACE" --create-namespace \
-	  --set cloudnative-pg.enabled=false; \
+	  --set cloudnative-pg.enabled=false \
+	  --set cert-manager.enabled=false; \
 	echo ""; \
 	echo "==> Waiting for pods to be ready in $$NAMESPACE (5m deadline)"; \
 	DEADLINE=$$(($$(date +%s) + 300)); \
