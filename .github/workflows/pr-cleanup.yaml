@@ -1,9 +1,16 @@
 name: PR Cleanup
 
-# Tears down per-PR Replicated resources (customer + channel) when a PR is
-# closed or merged. The ephemeral CMX cluster is already removed at the end
-# of each pr.yaml run (and otherwise auto-TTLs in 1h), so this workflow only
-# needs to clean up the long-lived state: the trial customer and the channel.
+# Tears down per-PR resources when a PR is closed or merged:
+#   1. Delete the per-PR namespace `groovelab-pr-<slug>` from the shared
+#      `groovelab-ci` CMX cluster (GRO-e4wb).
+#   2. Archive the per-PR trial customer.
+#   3. Demote and archive the per-PR channel.
+#
+# GRO-e4wb: the shared `groovelab-ci` cluster is intentionally NOT removed
+# by this workflow. It persists for 24h so subsequent PR runs (same PR
+# re-runs or parallel PRs) skip the ~2-3 min cluster-provisioning cost.
+# The cluster auto-evicts via CMX TTL; the next PR run after eviction
+# provisions a new one lazily.
 #
 # Slug normalization MUST match .github/workflows/pr.yaml step 1 exactly —
 # see GRO-lcva. If you edit the algorithm there, mirror it here.
@@ -61,6 +68,47 @@ jobs:
           fi
           echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
           echo "Slug to clean up: ${SLUG}"
+
+      # GRO-e4wb: delete the per-PR namespace from the shared `groovelab-ci`
+      # cluster. We tolerate every "not found" outcome — the cluster may
+      # have TTL'd between the last PR run and PR-close, in which case
+      # there's nothing to delete and that's fine.
+      #
+      # The `replicated cluster kubeconfig` invocation requires the cluster
+      # ID, so we look it up by name first. If no running cluster is found,
+      # skip namespace cleanup entirely (the namespace died with the
+      # cluster).
+      - name: Delete per-PR namespace from shared cluster
+        env:
+          SLUG: ${{ steps.slug.outputs.slug }}
+        run: |
+          CLUSTER_NAME="groovelab-ci"
+          NAMESPACE="groovelab-pr-${SLUG}"
+          NAMESPACE="${NAMESPACE:0:63}"
+          NAMESPACE="${NAMESPACE%-}"
+          CLUSTER_ID=$(replicated cluster ls --output json \
+            | jq -r --arg n "$CLUSTER_NAME" \
+                '[.[] | select(.name == $n and .status == "running")][0].id // empty')
+          if [ -z "$CLUSTER_ID" ]; then
+            echo "No running ${CLUSTER_NAME} cluster — namespace ${NAMESPACE} already gone with it."
+            exit 0
+          fi
+          echo "[$(date +%H:%M:%S)] Fetching kubeconfig for ${CLUSTER_NAME} (ID: ${CLUSTER_ID})"
+          KUBECONFIG_FILE="${RUNNER_TEMP}/cleanup-kubeconfig.yaml"
+          replicated cluster kubeconfig "$CLUSTER_ID" \
+            --app "${APP_SLUG}" \
+            --output-path "$KUBECONFIG_FILE"
+          export KUBECONFIG="$KUBECONFIG_FILE"
+          # `--ignore-not-found` is the idempotent path: re-running cleanup
+          # after a successful delete is a no-op. `--wait=false` returns
+          # immediately so we don't block the cleanup workflow on namespace
+          # finalizers; the per-PR namespace only owns this PR's helm
+          # release + secrets, which terminate quickly.
+          echo "[$(date +%H:%M:%S)] kubectl delete namespace ${NAMESPACE} --ignore-not-found"
+          kubectl delete namespace "$NAMESPACE" \
+            --ignore-not-found \
+            --wait=false || true
+          echo "Namespace ${NAMESPACE} delete requested."
 
       # Archive the trial customer if it still exists. `customer archive` is
       # the idempotent tear-down verb; `customer delete` may not be available

@@ -365,6 +365,54 @@ automatically via the KOTS HelmChart CR's `weight` field. The
 in-chart CRD-check hook still runs on those paths and is a no-op when
 CRDs are already Established.
 
+## CI cluster lifecycle (medium-life shared cluster + per-PR namespace)
+
+GRO-e4wb. As of this story, `.github/workflows/pr.yaml`'s `cmx-test` job no
+longer provisions a fresh CMX cluster per run. Instead it shares a single
+medium-life cluster across all PRs and isolates each PR at the Kubernetes
+namespace layer:
+
+| Resource | Lifetime | Scope |
+|---|---|---|
+| CMX cluster `groovelab-ci` | 24h TTL, lazily re-created | global (one per repo) |
+| Cluster-shared infra (CNPG operator, cert-manager) | per-cluster | global on the cluster |
+| Per-PR namespace `groovelab-pr-<slug>` | per-PR (until PR close) | per-PR |
+| Per-PR Replicated channel `<slug>` | per-PR | per-PR |
+| Per-PR trial customer `pr-<slug>` | per-PR (24h trial expiry) | per-PR |
+
+Lookup-or-create flow (in pseudo-shell):
+
+```bash
+CLUSTER_ID=$(replicated cluster ls --output json \
+  | jq -r '[.[] | select(.name == "groovelab-ci" and .status == "running")][0].id // empty')
+if [ -z "$CLUSTER_ID" ]; then
+  CLUSTER_ID=$(replicated cluster create \
+    --distribution k3s --version 1.32 --ttl 24h \
+    --name groovelab-ci --wait 5m --output json | jq -r '.id')
+  NEED_INFRA_INSTALL=true   # install CNPG + cert-manager once on this fresh cluster
+else
+  NEED_INFRA_INSTALL=false  # reuse — operators already installed
+fi
+
+NAMESPACE="groovelab-pr-${SLUG}"
+kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+helm install groovelab oci://... --namespace "$NAMESPACE" --create-namespace ...
+```
+
+PR close (`pr-cleanup.yaml`) removes only the namespace + customer + channel.
+The cluster persists until its 24h CMX TTL fires; the next PR run after
+eviction lazily provisions a new one.
+
+Why: cluster provisioning was the largest unparallelizable contributor to
+`cmx-test` wall-clock (~2-3 min). Sharing it means same-PR re-runs and
+parallel PRs both pay $0 cluster time. Trade-off: the one PR run that
+catches the eviction window pays the provisioning cost, and we accept that
+in exchange for the steady-state savings.
+
+`release.yaml` is intentionally unchanged — release-tag smoke tests still
+provision short-lived ephemeral clusters since release frequency is low and
+the additional isolation simplifies signed-release validation.
+
 ## Local per-PR install (`make pr-test`)
 
 The repo-root `Makefile` has `pr-*` targets that mirror
@@ -380,15 +428,18 @@ make pr-slug
 # End-to-end (requires REPLICATED_API_TOKEN exported):
 #   1. create or reuse the per-branch Replicated channel
 #   2. create or reuse the trial customer licensed to that channel
-#   3. provision a CMX k3s cluster (1h TTL)
-#   4. package the chart, release it, helm install via OCI w/ license injection
-#   5. run smoke tests (/healthz 200, /flashcards/answer 404)
+#   3. lookup-or-create the shared `groovelab-ci` cluster (TTL 24h)
+#   4. ensure namespace `groovelab-pr-<slug>` exists
+#   5. install CNPG operator (only if cluster was freshly provisioned)
+#   6. package the chart, release it, helm install via OCI w/ license injection
+#   7. run smoke tests (/healthz 200, /flashcards/answer 404)
 make pr-test
 
 # Pin the chart appVersion to a specific GHCR image tag while iterating.
 make pr-test IMAGE_TAG=pr-123-abc1234
 
-# Clean up everything created above.
+# Clean up per-PR resources (namespace + customer + channel). Shared cluster
+# is NOT removed by `pr-teardown`; it persists per the GRO-e4wb lifecycle.
 make pr-teardown
 ```
 

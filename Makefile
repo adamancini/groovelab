@@ -207,30 +207,44 @@ pr-customer: _require-token pr-channel ## Create or reuse the trial customer lic
 	  echo "OK: customer $$NAME created"; \
 	fi
 
-pr-cluster: _require-token _require-not-main ## Provision a CMX k3s cluster (1h TTL, scoped to slug)
+pr-cluster: _require-token _require-not-main ## Lookup-or-create the shared CMX cluster `groovelab-ci` (TTL 24h) and write per-run state
 	@set -euo pipefail; \
 	SLUG="$(PR_SLUG)"; \
-	CLUSTER_NAME="pr-$$SLUG-$$(date +%s)"; \
-	CLUSTER_NAME="$${CLUSTER_NAME:0:63}"; \
-	echo "==> Provisioning CMX k3s cluster $$CLUSTER_NAME (TTL 1h)"; \
-	CLUSTER_JSON=$$(replicated cluster create \
-	  --distribution k3s --version "1.32" \
-	  --name "$$CLUSTER_NAME" --ttl 1h --wait 10m \
-	  --app "$(APP_SLUG)" --output json); \
-	CLUSTER_ID=$$(echo "$$CLUSTER_JSON" \
-	  | jq -r --arg n "$$CLUSTER_NAME" 'if type == "array" then (.[] | select(.name == $$n) | .id // empty) else (.id // .cluster.id // empty) end' \
-	  | head -n1); \
-	echo "OK: cluster $$CLUSTER_NAME (ID: $$CLUSTER_ID)"; \
+	CLUSTER_NAME="groovelab-ci"; \
+	echo "==> Looking up shared CMX cluster $$CLUSTER_NAME"; \
+	CLUSTER_ID=$$(replicated cluster ls --output json \
+	  | jq -r --arg n "$$CLUSTER_NAME" '[.[] | select(.name == $$n and .status == "running")][0].id // empty'); \
+	if [ -z "$$CLUSTER_ID" ]; then \
+	  echo "==> No running $$CLUSTER_NAME; provisioning new (TTL 24h)"; \
+	  CLUSTER_JSON=$$(replicated cluster create \
+	    --distribution k3s --version "1.32" \
+	    --name "$$CLUSTER_NAME" --ttl 24h --wait 10m \
+	    --app "$(APP_SLUG)" --output json); \
+	  CLUSTER_ID=$$(echo "$$CLUSTER_JSON" \
+	    | jq -r --arg n "$$CLUSTER_NAME" 'if type == "array" then (.[] | select(.name == $$n) | .id // empty) else (.id // .cluster.id // empty) end' \
+	    | head -n1); \
+	  echo "OK: cluster $$CLUSTER_NAME provisioned (ID: $$CLUSTER_ID)"; \
+	  NEED_INFRA_INSTALL=true; \
+	else \
+	  echo "OK: reusing $$CLUSTER_NAME (ID: $$CLUSTER_ID)"; \
+	  NEED_INFRA_INSTALL=false; \
+	fi; \
 	mkdir -p $(DIST_DIR); \
 	echo "$$CLUSTER_ID" > $(DIST_DIR)/pr-cluster-id; \
 	echo "$$CLUSTER_NAME" > $(DIST_DIR)/pr-cluster-name; \
+	echo "$$NEED_INFRA_INSTALL" > $(DIST_DIR)/pr-need-infra-install; \
 	replicated cluster kubeconfig "$$CLUSTER_ID" --app "$(APP_SLUG)" \
 	  --output-path $(DIST_DIR)/pr-kubeconfig.yaml; \
 	echo "OK: kubeconfig written to $(DIST_DIR)/pr-kubeconfig.yaml"; \
+	NAMESPACE="groovelab-pr-$$SLUG"; \
+	NAMESPACE="$${NAMESPACE:0:63}"; \
+	NAMESPACE="$${NAMESPACE%-}"; \
+	echo "$$NAMESPACE" > $(DIST_DIR)/pr-namespace; \
+	echo "OK: per-PR namespace will be $$NAMESPACE"; \
 	echo ""; \
 	echo "Use:  export KUBECONFIG=$$PWD/$(DIST_DIR)/pr-kubeconfig.yaml"
 
-pr-install: _require-token _require-not-main pr-channel pr-customer ## Package chart, release on per-PR channel, helm install via OCI (assumes pr-cluster ran)
+pr-install: _require-token _require-not-main pr-channel pr-customer ## Package chart, release on per-PR channel, helm install via OCI into per-PR namespace (assumes pr-cluster ran)
 	@set -euo pipefail; \
 	SLUG="$(PR_SLUG)"; \
 	CHART_VERSION="$(PR_CHART_VERSION)"; \
@@ -239,6 +253,12 @@ pr-install: _require-token _require-not-main pr-channel pr-customer ## Package c
 	  echo "ERROR: $(DIST_DIR)/pr-kubeconfig.yaml not found. Run 'make pr-cluster' first."; \
 	  exit 1; \
 	fi; \
+	if [ ! -f $(DIST_DIR)/pr-namespace ]; then \
+	  echo "ERROR: $(DIST_DIR)/pr-namespace not found. Run 'make pr-cluster' first."; \
+	  exit 1; \
+	fi; \
+	NAMESPACE=$$(cat $(DIST_DIR)/pr-namespace); \
+	NEED_INFRA_INSTALL=$$(cat $(DIST_DIR)/pr-need-infra-install 2>/dev/null || echo "false"); \
 	export KUBECONFIG="$$PWD/$(DIST_DIR)/pr-kubeconfig.yaml"; \
 	LICENSE_ID=$$(replicated customer ls --app "$(APP_SLUG)" --output json \
 	  | jq -r --arg n "$$NAME" '.[] | select(.name == $$n) | .installationId'); \
@@ -258,12 +278,18 @@ pr-install: _require-token _require-not-main pr-channel pr-customer ## Package c
 	replicated release create \
 	  --yaml-dir $(RELEASE_DIR) --promote "$$SLUG" \
 	  --version "$$CHART_VERSION" --app "$(APP_SLUG)" --output json >/dev/null; \
-	echo "==> Pre-installing CNPG operator (CRDs first)"; \
-	(cd $(CHART_DIR)/charts && for f in cloudnative-pg-*.tgz; do \
-	   [ -f "$$f" ] && [ ! -d "$${f%.tgz}" ] && tar xzf "$$f" || true; \
-	 done); \
-	helm upgrade --install cnpg-operator $(CHART_DIR)/charts/cloudnative-pg \
-	  --namespace cnpg-system --create-namespace --wait --timeout 3m; \
+	if [ "$$NEED_INFRA_INSTALL" = "true" ]; then \
+	  echo "==> Pre-installing CNPG operator (fresh cluster)"; \
+	  (cd $(CHART_DIR)/charts && for f in cloudnative-pg-*.tgz; do \
+	     [ -f "$$f" ] && [ ! -d "$${f%.tgz}" ] && tar xzf "$$f" || true; \
+	   done); \
+	  helm upgrade --install cnpg-operator $(CHART_DIR)/charts/cloudnative-pg \
+	    --namespace cnpg-system --create-namespace --wait --timeout 3m; \
+	else \
+	  echo "==> Reusing shared cluster — skipping CNPG operator install."; \
+	fi; \
+	echo "==> Ensuring per-PR namespace $$NAMESPACE exists"; \
+	kubectl create namespace "$$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -; \
 	echo "==> helm registry login registry.replicated.com"; \
 	echo "$$LICENSE_ID" | helm registry login registry.replicated.com \
 	  --username "$$LICENSE_ID" --password-stdin; \
@@ -276,29 +302,29 @@ pr-install: _require-token _require-not-main pr-channel pr-customer ## Package c
 	  exit 1; \
 	fi; \
 	echo "OK: license injection verified."; \
-	echo "==> helm install $(APP_SLUG) $$OCI_URL --version $$CHART_VERSION"; \
-	helm install "$(APP_SLUG)" "$$OCI_URL" \
+	echo "==> helm upgrade --install $(APP_SLUG) $$OCI_URL --version $$CHART_VERSION -n $$NAMESPACE"; \
+	helm upgrade --install "$(APP_SLUG)" "$$OCI_URL" \
 	  --version "$$CHART_VERSION" \
-	  --namespace "$(APP_SLUG)" --create-namespace \
+	  --namespace "$$NAMESPACE" --create-namespace \
 	  --set cloudnative-pg.enabled=false; \
 	echo ""; \
-	echo "==> Waiting for pods to be ready (5m deadline)"; \
+	echo "==> Waiting for pods to be ready in $$NAMESPACE (5m deadline)"; \
 	DEADLINE=$$(($$(date +%s) + 300)); \
 	while true; do \
 	  echo "[$$(date +%H:%M:%S)] Pod status:"; \
-	  kubectl get pods -n "$(APP_SLUG)" --no-headers 2>/dev/null || true; \
-	  NOT_READY=$$(kubectl get pods -n "$(APP_SLUG)" --no-headers 2>/dev/null | grep -v -E "Running|Completed" || true); \
+	  kubectl get pods -n "$$NAMESPACE" --no-headers 2>/dev/null || true; \
+	  NOT_READY=$$(kubectl get pods -n "$$NAMESPACE" --no-headers 2>/dev/null | grep -v -E "Running|Completed" || true); \
 	  [ -z "$$NOT_READY" ] && break; \
 	  if [ "$$(date +%s)" -ge "$$DEADLINE" ]; then \
 	    echo "TIMEOUT: pods not ready after 5 minutes"; \
-	    kubectl get events -n "$(APP_SLUG)" --sort-by=.lastTimestamp | tail -30; \
+	    kubectl get events -n "$$NAMESPACE" --sort-by=.lastTimestamp | tail -30; \
 	    exit 1; \
 	  fi; \
 	  sleep 15; \
 	done; \
 	echo "OK: all pods running."; \
 	echo "==> Smoke test: /healthz 200 + flashcards/answer 404"; \
-	kubectl port-forward svc/$(APP_SLUG)-backend 18080:8080 -n "$(APP_SLUG)" >/dev/null 2>&1 & \
+	kubectl port-forward svc/$(APP_SLUG)-backend 18080:8080 -n "$$NAMESPACE" >/dev/null 2>&1 & \
 	PF_PID=$$!; \
 	sleep 5; \
 	HTTP=$$(curl -s -o /dev/null -w "%{http_code}" http://localhost:18080/healthz); \
@@ -312,21 +338,27 @@ pr-test: _require-token _require-not-main pr-cluster pr-install ## Composite: ch
 	@echo ""
 	@echo "PASS: pr-test green for slug $(PR_SLUG). Run 'make pr-teardown' to clean up."
 
-pr-teardown: _require-token ## Tear down per-PR channel, customer, and cluster
+pr-teardown: _require-token ## Tear down per-PR namespace, customer, and channel (shared cluster persists per GRO-e4wb)
 	@set -euo pipefail; \
 	SLUG="$(PR_SLUG)"; \
 	NAME="$(PR_CUSTOMER_NAME)"; \
-	echo "==> Tearing down resources for slug: $$SLUG"; \
-	if [ -f $(DIST_DIR)/pr-cluster-id ]; then \
-	  CID=$$(cat $(DIST_DIR)/pr-cluster-id); \
-	  if [ -n "$$CID" ]; then \
-	    echo "  - Removing cluster $$CID"; \
-	    replicated cluster rm "$$CID" --app "$(APP_SLUG)" || true; \
-	  fi; \
-	  rm -f $(DIST_DIR)/pr-cluster-id $(DIST_DIR)/pr-cluster-name $(DIST_DIR)/pr-kubeconfig.yaml; \
+	echo "==> Tearing down per-PR resources for slug: $$SLUG"; \
+	NAMESPACE=""; \
+	if [ -f $(DIST_DIR)/pr-namespace ]; then \
+	  NAMESPACE=$$(cat $(DIST_DIR)/pr-namespace); \
 	else \
-	  echo "  - No cluster id file at $(DIST_DIR)/pr-cluster-id (skip cluster rm; 1h TTL covers it)"; \
+	  NAMESPACE="groovelab-pr-$$SLUG"; \
+	  NAMESPACE="$${NAMESPACE:0:63}"; \
+	  NAMESPACE="$${NAMESPACE%-}"; \
 	fi; \
+	if [ -f $(DIST_DIR)/pr-kubeconfig.yaml ]; then \
+	  echo "  - Deleting namespace $$NAMESPACE from shared cluster"; \
+	  KUBECONFIG="$$PWD/$(DIST_DIR)/pr-kubeconfig.yaml" \
+	    kubectl delete namespace "$$NAMESPACE" --ignore-not-found --wait=false || true; \
+	else \
+	  echo "  - No kubeconfig at $(DIST_DIR)/pr-kubeconfig.yaml; skipping namespace delete (cluster may have TTL'd)"; \
+	fi; \
+	rm -f $(DIST_DIR)/pr-cluster-id $(DIST_DIR)/pr-cluster-name $(DIST_DIR)/pr-namespace $(DIST_DIR)/pr-need-infra-install $(DIST_DIR)/pr-kubeconfig.yaml; \
 	CUST_ID=$$(replicated customer ls --app "$(APP_SLUG)" --output json \
 	  | jq -r --arg n "$$NAME" '.[] | select(.name == $$n) | .id // empty'); \
 	if [ -n "$$CUST_ID" ]; then \
@@ -343,4 +375,5 @@ pr-teardown: _require-token ## Tear down per-PR channel, customer, and cluster
 	else \
 	  echo "  - No channel named $$SLUG (already gone)"; \
 	fi; \
+	echo "  - Shared cluster groovelab-ci persists (TTL 24h); not removed."; \
 	echo "OK: teardown complete."
