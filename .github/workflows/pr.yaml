@@ -206,16 +206,25 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-  # ── Build, Push, and Sign Images ─────────────────────────────────────────
+  # ── Build, Push, and Sign Images (matrix: frontend || backend) ───────────
+  # GRO-fuxa: previously a single job that built+pushed+signed both images
+  # serially (~3.5m wall-clock). Split into a 2-leg matrix so the two images
+  # build in parallel runners (~1.8m wall-clock target). Each leg keeps its
+  # own buildx cache scope (GRO-i987) so the parallel legs don't thrash a
+  # shared `type=gha` cache.
   build-sign:
-    name: Build, Push, and Sign Images
+    name: Build, Push, and Sign (${{ matrix.service }})
     runs-on: ubuntu-latest
     needs: [detect-changes, lint-test]
     if: needs.detect-changes.outputs.code == 'true'
-    outputs:
-      frontend-digest: ${{ steps.build-frontend.outputs.digest }}
-      backend-digest: ${{ steps.build-backend.outputs.digest }}
-      image-tag: ${{ steps.meta.outputs.tag }}
+    permissions:
+      contents: read
+      packages: write
+      id-token: write  # cosign keyless signing via OIDC (per-leg)
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, backend]
     steps:
       - name: Record job start
         id: job_start
@@ -240,49 +249,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # Docker buildx caches scoped per-workflow (GRO-i987) so pr.yaml and
-      # release.yaml don't collide on shared keys, and per-image so frontend
-      # layer churn doesn't invalidate backend layers.
-      - name: Build and push frontend
-        id: build-frontend
+      # Per-image cache scope (GRO-i987) preserved under matrix: each leg
+      # has its own scope so frontend layer churn doesn't invalidate backend
+      # layers and vice versa.
+      - name: Build and push ${{ matrix.service }}
+        id: build
         uses: docker/build-push-action@v6
         with:
-          context: frontend/
+          context: ${{ matrix.service }}/
           platforms: linux/amd64
           push: true
-          tags: ${{ env.GHCR_PREFIX }}/groovelab-frontend:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=frontend-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=frontend-${{ github.workflow }}
-
-      - name: Build and push backend
-        id: build-backend
-        uses: docker/build-push-action@v6
-        with:
-          context: backend/
-          platforms: linux/amd64
-          push: true
-          tags: ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=backend-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=backend-${{ github.workflow }}
+          tags: ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+          cache-from: type=gha,scope=${{ matrix.service }}-${{ github.workflow }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ github.workflow }}
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign frontend image
+      - name: Sign ${{ matrix.service }} image
         run: |
           cosign sign --yes \
-            "${{ env.GHCR_PREFIX }}/groovelab-frontend@${{ steps.build-frontend.outputs.digest }}"
+            "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}@${{ steps.build.outputs.digest }}"
 
-      - name: Sign backend image
-        run: |
-          cosign sign --yes \
-            "${{ env.GHCR_PREFIX }}/groovelab-backend@${{ steps.build-backend.outputs.digest }}"
-
-      # GRO-qrdt: per-job wall-clock timing summary.
+      # GRO-qrdt: per-job wall-clock timing summary (per matrix leg).
       - name: Job timing summary
         if: always()
         env:
-          JOB_NAME: ${{ github.job }}
+          JOB_NAME: ${{ github.job }} (${{ matrix.service }})
           RUNNER_OS: ${{ runner.os }}
           JOB_START: ${{ steps.job_start.outputs.epoch }}
         run: |
@@ -312,6 +305,31 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
+  # ── Build-Sign Collector (output aggregation for matrix) ─────────────────
+  # GRO-fuxa: GitHub matrix-job outputs aren't directly addressable as
+  # `needs.build-sign.outputs.*` (they're per-leg, last-one-wins semantics).
+  # This collector job depends on both matrix legs (so it only runs when
+  # both succeed), and re-emits the deterministic image-tag as a single
+  # workflow-level output. Downstream `cmx-test` consumes it from here.
+  # See https://github.com/orgs/community/discussions/17245 for the canonical
+  # pattern.
+  build-sign-collect:
+    name: Collect build-sign outputs
+    runs-on: ubuntu-latest
+    needs: [detect-changes, build-sign]
+    if: needs.detect-changes.outputs.code == 'true'
+    outputs:
+      image-tag: ${{ steps.compute.outputs.tag }}
+    steps:
+      - name: Compute image tag (must match matrix legs)
+        id: compute
+        run: |
+          # Tag is deterministic from PR number + sha — recompute here instead
+          # of trying to thread per-leg outputs through a matrix job.
+          TAG="pr-${{ github.event.pull_request.number }}-${GITHUB_SHA::7}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Image tag: ${TAG}"
+
   # ── Replicated Release and CMX Test ──────────────────────────────────────
   # Customer-grade install: per-PR channel + trial customer + ephemeral CMX
   # cluster + OCI install from registry.replicated.com. Exercises the same
@@ -331,11 +349,14 @@ jobs:
   cmx-test:
     name: Replicated Release and CMX Test
     runs-on: ubuntu-latest
-    needs: [detect-changes, build-sign]
+    # GRO-fuxa: consume image-tag from build-sign-collect aggregator (matrix
+    # job outputs aren't directly addressable). build-sign itself is also
+    # listed so cmx-test still gates on both matrix legs succeeding.
+    needs: [detect-changes, build-sign, build-sign-collect]
     if: needs.detect-changes.outputs.code == 'true'
     env:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
-      IMAGE_TAG: ${{ needs.build-sign.outputs.image-tag }}
+      IMAGE_TAG: ${{ needs.build-sign-collect.outputs.image-tag }}
     steps:
       - name: Record job start
         id: job_start
@@ -929,7 +950,11 @@ jobs:
   ci-timing-comment:
     name: CI Timing Summary
     runs-on: ubuntu-latest
-    needs: [detect-changes, lint-test, build-sign, cmx-test]
+    # GRO-fuxa: build-sign is now a matrix; ci-timing-comment fetches per-job
+    # timing via REST so it captures both matrix legs as separate rows.
+    # build-sign-collect is included so the aggregator runs after the
+    # collector resolves (and to prevent it racing past matrix completion).
+    needs: [detect-changes, lint-test, build-sign, build-sign-collect, cmx-test]
     if: always() && github.event_name == 'pull_request'
     permissions:
       pull-requests: write
@@ -982,11 +1007,14 @@ jobs:
               | "| \(.name) | \($m)m \($s)s | \($emoji) \(.conclusion // .status) |"
             ' /tmp/jobs.ndjson
 
-            # Total wall-clock = sum of completed-job durations. PR Validation
-            # is currently a linear DAG (lint-test -> build-sign -> cmx-test
-            # plus detect-changes upfront), so sum ≈ longest path. TODO:
-            # when matrix/parallel jobs land (e.g., GRO-fuxa frontend|backend
-            # split), switch this to max(parallel_group) + sequential.
+            # Total wall-clock = sum of completed-job durations. After
+            # GRO-fuxa landed (matrix split of build-sign into frontend +
+            # backend legs), this sum overcounts wall-clock by ~1 leg's
+            # duration when both legs run in parallel — i.e., the printed
+            # "Total" is now an upper bound, not the true critical path.
+            # The per-leg rows above show the actual wall-clock contribution.
+            # Switching this to max(parallel_group) + sequential is a future
+            # cleanup; for now the per-row durations are the source of truth.
             TOTAL=$(jq -s '
               [.[]
                | select(.completed_at != null)
