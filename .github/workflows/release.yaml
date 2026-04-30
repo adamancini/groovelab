@@ -26,6 +26,11 @@ jobs:
       backend-digest: ${{ steps.build-backend.outputs.digest }}
       version: ${{ steps.meta.outputs.version }}
     steps:
+      # GRO-qrdt: per-job wall-clock timing.
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -89,6 +94,40 @@ jobs:
           cosign sign --yes \
             "${{ env.GHCR_PREFIX }}/groovelab-backend@${{ steps.build-backend.outputs.digest }}"
 
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
   # ── Release to Unstable and Test ─────────────────────────────────────────
   release-unstable:
     name: Release to Unstable and Test
@@ -100,6 +139,10 @@ jobs:
     outputs:
       release-sequence: ${{ steps.release.outputs.sequence }}
     steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -462,6 +505,40 @@ jobs:
             echo "Cluster removal requested."
           fi
 
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
   # ── Promote to Stable ────────────────────────────────────────────────────
   promote-stable:
     name: Promote to Stable
@@ -483,6 +560,10 @@ jobs:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
       VERSION: ${{ needs.build-sign.outputs.version }}
     steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
       - name: Install Replicated CLI
         run: |
           curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
@@ -517,3 +598,37 @@ jobs:
           echo "    --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \\"
           echo "    ${{ env.GHCR_PREFIX }}/groovelab-backend:${{ env.VERSION }}"
           echo "================================================================"
+
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
