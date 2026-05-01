@@ -498,8 +498,12 @@ jobs:
           echo "sequence=${SEQ}" >> "$GITHUB_OUTPUT"
           echo "Release sequence: ${SEQ} (version ${CHART_VERSION}) promoted to ${SLUG}"
 
-      # Step 5 — Create or reuse a trial customer licensed to this channel.
-      - name: Create or reuse trial customer
+      # Step 5 — Create or reuse a dev customer licensed to this channel.
+      # GRO-e4wb (rework): switched from `--type trial --expires-in 24h` to
+      # `--type dev` with no expiration. Dev customers don't expire by default,
+      # which suits CI where the same per-PR customer is reused across many
+      # iterations over days/weeks until PR close. Project owner direction.
+      - name: Create or reuse dev customer
         id: customer
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
@@ -509,14 +513,13 @@ jobs:
             | jq -r --arg n "$CUSTOMER_NAME" '.[] | select(.name == $n) | .installationId // empty')
           if [ -n "$EXISTING" ]; then
             LICENSE_ID="$EXISTING"
-            echo "Reusing existing customer ${CUSTOMER_NAME}"
+            echo "Reusing existing dev customer ${CUSTOMER_NAME}"
           else
             CUSTOMER_JSON=$(replicated customer create \
               --name "$CUSTOMER_NAME" \
               --email "pr+${SLUG}@replicated.com" \
               --channel "$SLUG" \
-              --type trial \
-              --expires-in 24h \
+              --type dev \
               --app "${APP_SLUG}" \
               --output json)
             LICENSE_ID=$(echo "$CUSTOMER_JSON" \
@@ -531,7 +534,7 @@ jobs:
               LICENSE_ID=$(replicated customer ls --app "${APP_SLUG}" --output json \
                 | jq -r --arg n "$CUSTOMER_NAME" '.[] | select(.name == $n) | .installationId')
             fi
-            echo "Customer created: ${CUSTOMER_NAME}"
+            echo "Dev customer created: ${CUSTOMER_NAME}"
           fi
           if [ -z "$LICENSE_ID" ] || [ "$LICENSE_ID" = "null" ]; then
             echo "ERROR: could not resolve licenseID for ${CUSTOMER_NAME}"
@@ -541,35 +544,67 @@ jobs:
           echo "::add-mask::${LICENSE_ID}"
           echo "license_id=${LICENSE_ID}" >> "$GITHUB_OUTPUT"
 
-      # Step 6 — Provision a fresh CMX k3s cluster per run (not shared).
-      - name: Provision CMX k3s cluster
+      # Step 6 — Lookup-or-create the medium-life shared CMX k3s cluster
+      # (GRO-e4wb). Single global cluster `groovelab-ci` (TTL 24h) is reused
+      # across PRs and runs; isolation between PRs is achieved at the
+      # Kubernetes namespace layer (`groovelab-pr-<slug>`), not the cluster
+      # layer. Customer + channel remain per-PR (handled in steps 3-5).
+      #
+      # First PR run after the previous cluster TTL'd will pay a one-time
+      # ~2-3 min provisioning cost; all subsequent runs (across same PR
+      # re-runs and parallel PRs alike) skip cluster create entirely.
+      # Need-infra-install flag is set on a fresh cluster so step 7 knows
+      # whether to install the shared CNPG operator.
+      - name: Lookup or create shared CMX cluster
         id: cluster
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
-          RUN_ID: ${{ github.run_id }}
         run: |
-          CLUSTER_NAME="pr-${SLUG}-${RUN_ID}"
-          # CMX name cap is 63 chars; trim defensively.
-          CLUSTER_NAME="${CLUSTER_NAME:0:63}"
-          CLUSTER_JSON=$(replicated cluster create \
-            --distribution k3s \
-            --version "${K3S_VERSION}" \
-            --name "$CLUSTER_NAME" \
-            --ttl 1h \
-            --wait 5m \
-            --app "${APP_SLUG}" \
-            --output json)
-          CLUSTER_ID=$(echo "$CLUSTER_JSON" \
-            | jq -r --arg n "$CLUSTER_NAME" '
-                if type == "array" then
-                  (.[] | select(.name == $n) | .id // empty)
-                else
-                  (.id // .cluster.id // empty)
-                end' \
-            | head -n1)
+          CLUSTER_NAME="groovelab-ci"
+          # Lookup an existing running cluster by name first. `replicated
+          # cluster ls` may return recently-removed clusters too (status !=
+          # "running"), so filter on status == "running" to avoid picking
+          # up a stale ID that no longer routes.
+          CLUSTER_ID=$(replicated cluster ls --output json \
+            | jq -r --arg n "$CLUSTER_NAME" \
+                '[.[] | select(.name == $n and .status == "running")][0].id // empty')
+          if [ -z "$CLUSTER_ID" ]; then
+            echo "[$(date +%H:%M:%S)] No existing running ${CLUSTER_NAME}; provisioning new (TTL 24h)..."
+            CLUSTER_JSON=$(replicated cluster create \
+              --distribution k3s \
+              --version "${K3S_VERSION}" \
+              --name "$CLUSTER_NAME" \
+              --ttl 24h \
+              --wait 5m \
+              --app "${APP_SLUG}" \
+              --output json)
+            CLUSTER_ID=$(echo "$CLUSTER_JSON" \
+              | jq -r --arg n "$CLUSTER_NAME" '
+                  if type == "array" then
+                    (.[] | select(.name == $n) | .id // empty)
+                  else
+                    (.id // .cluster.id // empty)
+                  end' \
+              | head -n1)
+            echo "Cluster provisioned: ${CLUSTER_NAME} (ID: ${CLUSTER_ID})"
+            echo "need_infra_install=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "[$(date +%H:%M:%S)] Reusing existing ${CLUSTER_NAME} (ID: ${CLUSTER_ID})"
+            echo "need_infra_install=false" >> "$GITHUB_OUTPUT"
+          fi
           echo "id=${CLUSTER_ID}" >> "$GITHUB_OUTPUT"
           echo "name=${CLUSTER_NAME}" >> "$GITHUB_OUTPUT"
-          echo "Cluster provisioned: ${CLUSTER_NAME} (ID: ${CLUSTER_ID})"
+          # Per-PR namespace name. Same slug as channel/customer; isolates
+          # this PR's groovelab release on the shared cluster. The slug has
+          # already been normalized to DNS-safe chars in step 1.
+          NAMESPACE="groovelab-pr-${SLUG}"
+          # Kubernetes DNS-1123 labels are capped at 63 chars; defensive trim.
+          NAMESPACE="${NAMESPACE:0:63}"
+          # Strip any trailing hyphen left over from truncation so the value
+          # remains a valid DNS-1123 label.
+          NAMESPACE="${NAMESPACE%-}"
+          echo "namespace=${NAMESPACE}" >> "$GITHUB_OUTPUT"
+          echo "Per-PR namespace: ${NAMESPACE}"
 
       # Cost observability (AC 9). Best-effort: don't fail the job if the
       # subcommand name changes across CLI versions.
@@ -613,18 +648,84 @@ jobs:
       # dev path doesn't need Replicated value injection). The chart-side
       # crd-check Helm hook from GRO-s3mc is still in place as
       # belt-and-suspenders.
-      - name: Pre-install CNPG operator (CRDs first)
+      # Step 7 — Pre-install (or reuse) cluster-shared infrastructure.
+      # GRO-e4wb: on a fresh cluster, install BOTH the CNPG operator AND
+      # cert-manager once into shared namespaces; on cluster reuse, skip —
+      # both are already there and `helm install` would fail with "release
+      # already exists" / "CRD already exists" on collision.
+      #
+      # Why cert-manager has to be pre-installed (rework): cert-manager's
+      # CRDs (challenges.acme.cert-manager.io, certificates.cert-manager.io,
+      # etc.) are cluster-scoped. The first per-PR `helm install groovelab
+      # oci://...` claims ownership via `meta.helm.sh/release-name` +
+      # `meta.helm.sh/release-namespace` annotations. The second per-PR
+      # install (parallel PR or reused cluster) tries to claim the same CRDs
+      # under a different release-namespace and Helm v4 rejects with:
+      #   `CustomResourceDefinition "challenges.acme.cert-manager.io" ...
+      #    annotation validation error: key "meta.helm.sh/release-namespace"
+      #    must equal "<ns-2>": current value is "<ns-1>"`
+      # Same multi-tenancy issue as CNPG. Fix is identical: install once at
+      # cluster-create time under `cert-manager` ns, then disable the
+      # cert-manager subchart on every per-PR `helm install`.
+      #
+      # The chart dep update is still always required (we need the
+      # cloudnative-pg-*.tgz and cert-manager-*.tgz on disk for the if-true
+      # path AND for the `helm package` step that already ran). Run it even
+      # on the skip path so that the helm-package output earlier in the job
+      # and the downstream OCI install both have a consistent on-disk
+      # `chart/charts/`.
+      - name: Pre-install cluster-shared infra (CNPG + cert-manager)
+        env:
+          NEED_INFRA_INSTALL: ${{ steps.cluster.outputs.need_infra_install }}
         run: |
+          if [ "$NEED_INFRA_INSTALL" != "true" ]; then
+            echo "[$(date +%H:%M:%S)] Reusing shared cluster — CNPG + cert-manager already installed; skipping."
+            exit 0
+          fi
           helm dependency update chart/
-          # Extract the cloudnative-pg subchart so we can install it directly.
-          # `helm dependency update` populates chart/charts/cloudnative-pg-*.tgz;
+          # Extract subcharts so we can install them directly.
+          # `helm dependency update` populates chart/charts/<dep>-*.tgz;
           # extract idempotently (skip if already extracted from a prior step).
-          (cd chart/charts && for f in cloudnative-pg-*.tgz; do
+          (cd chart/charts && for f in cloudnative-pg-*.tgz cert-manager-*.tgz; do
              [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true
            done)
+          echo "[$(date +%H:%M:%S)] Installing CNPG operator into cnpg-system..."
           helm install cnpg-operator chart/charts/cloudnative-pg \
             --namespace cnpg-system --create-namespace \
             --wait --timeout 3m
+          echo "[$(date +%H:%M:%S)] Installing cert-manager into cert-manager ns..."
+          # cert-manager subchart name varies (`cert-manager-v1.19.4` etc.);
+          # glob to the directory and pick the first match. Use a shell glob
+          # rather than `ls -d` to keep shellcheck happy (SC2012).
+          CM_DIR=""
+          for d in chart/charts/cert-manager-*/; do
+            if [ -d "$d" ]; then CM_DIR="${d%/}"; break; fi
+          done
+          if [ -z "$CM_DIR" ] || [ ! -d "$CM_DIR" ]; then
+            # Some Helm versions extract to chart/charts/cert-manager (no
+            # version suffix). Fall back to that.
+            CM_DIR="chart/charts/cert-manager"
+          fi
+          # CRDs ship in the same chart by default (installCRDs/crds.enabled
+          # depending on cert-manager version). cert-manager 1.19 uses
+          # `crds.enabled=true` to install CRDs as part of the chart.
+          helm install cert-manager "$CM_DIR" \
+            --namespace cert-manager --create-namespace \
+            --set crds.enabled=true \
+            --wait --timeout 3m
+
+      # GRO-e4wb: create the per-PR namespace BEFORE the helm install step
+      # so smoke tests, port-forwards, and the upgrade test all have a
+      # stable target. `kubectl create namespace --dry-run=client | apply -f -`
+      # is idempotent across PR re-runs.
+      - name: Create per-PR namespace
+        env:
+          NAMESPACE: ${{ steps.cluster.outputs.namespace }}
+        run: |
+          kubectl create namespace "$NAMESPACE" \
+            --dry-run=client -o yaml \
+            | kubectl apply -f -
+          echo "[$(date +%H:%M:%S)] Namespace ${NAMESPACE} ready."
 
       - name: Helm registry login (registry.replicated.com)
         env:
@@ -676,6 +777,7 @@ jobs:
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
           CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
+          NAMESPACE: ${{ steps.cluster.outputs.namespace }}
         run: |
           # No `--set replicated.enabled=...` or `--set
           # global.replicated.dockerconfigjson=...` overrides — Replicated's
@@ -690,21 +792,45 @@ jobs:
           # "CustomResourceDefinition ... cannot be imported into the current
           # release: invalid ownership metadata" because the CNPG CRDs already
           # carry release-name=cnpg-operator annotations.
+          #
+          # `--set cert-manager.enabled=false` is the SAME multi-tenancy
+          # fix applied to cert-manager (GRO-e4wb rework). cert-manager is
+          # pre-installed once at cluster-create time; per-PR installs must
+          # disable the subchart so they don't try to re-claim ownership of
+          # the cluster-scoped cert-manager CRDs (challenges.acme.cert-
+          # manager.io etc.). Without this, the second PR on the shared
+          # cluster fails with `meta.helm.sh/release-namespace must equal
+          # "<ns-2>": current value is "<ns-1>"`.
+          #
+          # GRO-e4wb: install into per-PR namespace `groovelab-pr-<slug>` on
+          # the medium-life shared cluster. Each PR gets its own release in
+          # its own namespace so parallel PR runs don't collide.
           OCI_URL="oci://registry.replicated.com/${APP_SLUG}/${SLUG}/${APP_SLUG}"
-          echo "[$(date +%H:%M:%S)] helm install ${APP_SLUG} ${OCI_URL} --version ${CHART_VERSION}"
+          echo "[$(date +%H:%M:%S)] helm install ${APP_SLUG} ${OCI_URL} --version ${CHART_VERSION} -n ${NAMESPACE}"
           # No --wait here: the next step ("Wait for pods to be ready") polls
           # kubectl with timestamped lines and a 5m deadline, and dumps
           # `kubectl describe pods` on timeout. That's strictly better
           # observability than a silent `helm install --wait` deadline.
-          helm install "${APP_SLUG}" "$OCI_URL" \
+          #
+          # `helm upgrade --install` (not bare `helm install`) is the
+          # idempotent verb required by the GRO-e4wb medium-life cluster
+          # lifecycle: PR re-runs reuse the same namespace, so a second push
+          # to the same PR would otherwise hit
+          #   `release name check failed: cannot reuse a name that is still
+          #    in use`.
+          # `upgrade --install` no-ops to install on first run and upgrades
+          # on every subsequent run, which is what we want.
+          helm upgrade --install "${APP_SLUG}" "$OCI_URL" \
             --version "$CHART_VERSION" \
-            --namespace "${APP_SLUG}" --create-namespace \
-            --set cloudnative-pg.enabled=false
+            --namespace "$NAMESPACE" --create-namespace \
+            --set cloudnative-pg.enabled=false \
+            --set cert-manager.enabled=false
 
       # Step 8 — Smoke tests against the customer-grade install.
       - name: Wait for pods to be ready
+        env:
+          NAMESPACE: ${{ steps.cluster.outputs.namespace }}
         run: |
-          NAMESPACE=groovelab
           DEADLINE=$(($(date +%s) + 300))
           while true; do
             echo "[$(date +%H:%M:%S)] Pod status:"
@@ -794,8 +920,9 @@ jobs:
           done
 
       - name: Smoke test — /healthz 200 and session contract 404
+        env:
+          NAMESPACE: ${{ steps.cluster.outputs.namespace }}
         run: |
-          NAMESPACE=groovelab
           kubectl port-forward svc/groovelab-backend 18080:8080 -n "$NAMESPACE" &
           PF_PID=$!
           sleep 5
@@ -830,8 +957,8 @@ jobs:
         env:
           SLUG: ${{ steps.slug.outputs.slug }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          NAMESPACE: ${{ steps.cluster.outputs.namespace }}
         run: |
-          NAMESPACE=groovelab
           UPGRADE_VERSION="0.0.0-pr${PR_NUMBER}.1"
           rm -f release/groovelab-*.tgz
           # Same appVersion contract as the install Package step:
@@ -872,6 +999,7 @@ jobs:
             --version "$UPGRADE_VERSION" \
             --namespace "$NAMESPACE" \
             --set cloudnative-pg.enabled=false \
+            --set cert-manager.enabled=false \
             --wait --timeout 6m
 
           echo "Re-running smoke tests after upgrade..."
@@ -886,18 +1014,23 @@ jobs:
           fi
           echo "PASS: post-upgrade /healthz returned 200"
 
-      # Step 10 — Cleanup. Cluster is removed eagerly (1h TTL is a safety net).
-      # Channel/customer teardown happens in pr-cleanup.yaml on PR close so
-      # re-runs of the same PR reuse them idempotently during iteration.
-      - name: Tear down CMX cluster
+      # Step 10 — Cleanup. GRO-e4wb: the shared `groovelab-ci` cluster is
+      # explicitly NOT torn down here; it persists across PR runs (TTL 24h)
+      # so subsequent runs (same PR or parallel PRs) skip the ~2-3 min
+      # cluster-provisioning cost. Per-PR namespace + customer + channel
+      # teardown happens in pr-cleanup.yaml on PR close so re-runs of the
+      # same PR reuse them idempotently during iteration.
+      #
+      # On job failure we leave the namespace intact so the developer can
+      # re-run kubectl/helm against it for diagnosis. pr-cleanup.yaml
+      # garbage-collects on PR close regardless of last-run outcome.
+      - name: Cleanup note (cluster persists)
         if: always()
         env:
-          CLUSTER_ID: ${{ steps.cluster.outputs.id }}
+          CLUSTER_NAME: ${{ steps.cluster.outputs.name }}
+          NAMESPACE: ${{ steps.cluster.outputs.namespace }}
         run: |
-          if [ -n "$CLUSTER_ID" ]; then
-            replicated cluster rm "$CLUSTER_ID" --app "${APP_SLUG}" || true
-            echo "Cluster removal requested."
-          fi
+          echo "[$(date +%H:%M:%S)] Shared cluster ${CLUSTER_NAME} persists (TTL 24h). Namespace ${NAMESPACE} retained for re-run / debug; pr-cleanup.yaml garbage-collects on PR close."
 
       # GRO-qrdt: per-job wall-clock timing summary.
       - name: Job timing summary
