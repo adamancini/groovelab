@@ -1,6 +1,11 @@
 import { useEffect, useState } from "react";
 
 interface UpdateData {
+  // GRO-xyqx: cold-cache responses now arrive as 200 with a typed pending
+  // envelope. The page renders a "checking" state for pending and only shows
+  // the no-updates / available-update cards once we have real data.
+  status?: "pending" | "ready";
+  reason?: string;
   versionLabel?: string;
   isDeployable?: boolean;
 }
@@ -60,6 +65,7 @@ export default function Updates() {
     );
   }
 
+  const isPending = update?.status === "pending";
   const hasUpdate = update && update.versionLabel;
 
   return (
@@ -82,7 +88,17 @@ export default function Updates() {
         </div>
 
         {/* Available update */}
-        {hasUpdate ? (
+        {isPending ? (
+          <div
+            className="bg-surface rounded-lg border border-white/10 p-6"
+            data-testid="updates-pending-card"
+          >
+            <p className="text-text-secondary text-sm">
+              Checking for updates... The Replicated SDK has not yet reported
+              an update status. Try again in a moment.
+            </p>
+          </div>
+        ) : hasUpdate ? (
           <div
             className="bg-surface rounded-lg border border-white/10 p-6"
             data-testid="available-update-card"

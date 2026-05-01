@@ -49,8 +49,21 @@ func (h *Handler) MountRoutes(r chi.Router) {
 	r.Get("/support-bundle/{bundleID}/download", h.DownloadSupportBundle)
 }
 
+// pendingPayload is the typed envelope returned to callers when the SDK cache
+// is cold (the SDK sidecar has simply not yet polled). See GRO-xyqx -- a
+// missing cache entry is the expected normal state during pod startup, not a
+// service-unavailable error, so it is encoded as 200 OK with status=pending.
+const pendingPayload = `{"status":"pending","reason":"sdk_cache_empty"}`
+
 // GetLicense returns the cached license info from Redis.
-// Returns 503 if the cache is empty (SDK has not yet polled).
+//
+// Response codes:
+//   - 200 OK with the populated SDK payload when the cache is warm.
+//   - 200 OK with {"status":"pending","reason":"sdk_cache_empty"} when the
+//     cache is cold (SDK has not yet polled). This is the expected normal
+//     startup state and is intentionally not 503.
+//   - 502 Bad Gateway when Redis itself is unreachable -- a genuine upstream
+//     failure, distinct from the cold-cache case.
 func (h *Handler) GetLicense(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
@@ -58,13 +71,13 @@ func (h *Handler) GetLicense(w http.ResponseWriter, r *http.Request) {
 	data, err := h.redis.Get(ctx, KeyLicenseInfo).Result()
 	if err == redis.Nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"error":"license info not yet available"}`))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(pendingPayload))
 		return
 	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
+		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"error":"failed to read license info"}`))
 		return
 	}
@@ -75,7 +88,14 @@ func (h *Handler) GetLicense(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetUpdates returns the cached update availability from Redis.
-// Returns 503 if the cache is empty (SDK has not yet polled).
+//
+// Response codes:
+//   - 200 OK with the populated SDK payload when the cache is warm.
+//   - 200 OK with {"status":"pending","reason":"sdk_cache_empty"} when the
+//     cache is cold (SDK has not yet polled). This is the expected normal
+//     startup state and is intentionally not 503.
+//   - 502 Bad Gateway when Redis itself is unreachable -- a genuine upstream
+//     failure, distinct from the cold-cache case.
 func (h *Handler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
@@ -83,13 +103,13 @@ func (h *Handler) GetUpdates(w http.ResponseWriter, r *http.Request) {
 	data, err := h.redis.Get(ctx, KeyUpdateAvailable).Result()
 	if err == redis.Nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
-		_, _ = w.Write([]byte(`{"error":"update info not yet available"}`))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(pendingPayload))
 		return
 	}
 	if err != nil {
 		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusServiceUnavailable)
+		w.WriteHeader(http.StatusBadGateway)
 		_, _ = w.Write([]byte(`{"error":"failed to read update info"}`))
 		return
 	}

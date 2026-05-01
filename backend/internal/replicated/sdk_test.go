@@ -397,7 +397,17 @@ func TestProxyHandler_License_CacheMiss(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "cache miss should return 503")
+	// GRO-xyqx: cold cache (SDK has not yet polled) is the expected normal
+	// startup state, not a service-unavailable error. Return 200 with a typed
+	// pending envelope so callers (browsers, ingresses, retry policies) do not
+	// treat it as a transport failure.
+	assert.Equal(t, http.StatusOK, rec.Code, "cold cache should return 200 with pending envelope")
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, "pending", resp["status"], "cold cache should signal pending status")
+	assert.Equal(t, "sdk_cache_empty", resp["reason"], "cold cache should explain reason")
 }
 
 func TestProxyHandler_Updates(t *testing.T) {
@@ -431,7 +441,66 @@ func TestProxyHandler_Updates_CacheMiss(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 
-	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "cache miss should return 503")
+	// GRO-xyqx: cold cache (SDK has not yet polled) is the expected normal
+	// startup state, not a service-unavailable error. Return 200 with a typed
+	// pending envelope so callers (browsers, ingresses, retry policies) do not
+	// treat it as a transport failure.
+	assert.Equal(t, http.StatusOK, rec.Code, "cold cache should return 200 with pending envelope")
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+	var resp map[string]string
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	assert.Equal(t, "pending", resp["status"], "cold cache should signal pending status")
+	assert.Equal(t, "sdk_cache_empty", resp["reason"], "cold cache should explain reason")
+}
+
+// TestProxyHandler_Updates_RedisError covers the genuine "backend infra
+// unreachable" case: Redis returns a non-Nil error. This must NOT be
+// conflated with the cold-cache case -- it should still surface as a 5xx so
+// callers can distinguish "we have not polled yet" from "the cache layer is
+// down".
+func TestProxyHandler_Updates_RedisError(t *testing.T) {
+	// Point at a Redis that does not exist -> connection refused.
+	rdClient := redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1", // reserved unassigned port
+		DialTimeout: 100 * time.Millisecond,
+		ReadTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = rdClient.Close() })
+
+	handler := replicated.NewHandler(rdClient)
+	r := chi.NewRouter()
+	handler.MountRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/updates", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	// 502 Bad Gateway = upstream cache layer is unreachable. Not 503 (which
+	// would conflate with cold cache prior to this change) and not 200 (which
+	// would silently mask a real outage).
+	assert.Equal(t, http.StatusBadGateway, rec.Code, "redis error should return 502 Bad Gateway")
+}
+
+// TestProxyHandler_License_RedisError mirrors the updates-redis-error case
+// for the license endpoint.
+func TestProxyHandler_License_RedisError(t *testing.T) {
+	rdClient := redis.NewClient(&redis.Options{
+		Addr:        "127.0.0.1:1",
+		DialTimeout: 100 * time.Millisecond,
+		ReadTimeout: 100 * time.Millisecond,
+	})
+	t.Cleanup(func() { _ = rdClient.Close() })
+
+	handler := replicated.NewHandler(rdClient)
+	r := chi.NewRouter()
+	handler.MountRoutes(r)
+
+	req := httptest.NewRequest(http.MethodGet, "/license", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusBadGateway, rec.Code, "redis error should return 502 Bad Gateway")
 }
 
 func TestSDKGracefulErrorHandling(t *testing.T) {
