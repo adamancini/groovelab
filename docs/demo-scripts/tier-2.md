@@ -50,7 +50,10 @@ kubectl -n groovelab get deploy groovelab-sdk   # 1/1
 ```
 
 > "SDK deployed with the app. Notice the name — `groovelab-sdk`, not
-> `replicated-sdk` — that's the `fullnameOverride` branding convention."
+> `replicated-sdk` — that's the `fullnameOverride` branding convention.
+> Notice also what we did NOT pass: no `dockerconfigjson`, no `licenseID`.
+> `helm registry login` against the Replicated OCI registry causes the
+> install to inject those values automatically."
 
 ### 1:00 – 1:30 — Proxied images
 
@@ -120,7 +123,13 @@ Wait or short-circuit by restarting the SDK pod. In the app (admin tab) the
 banner appears:
 *"A new version of Groovelab is available. [View in Admin]"*
 
-Log in as the non-admin user: banner text differs — *"Contact your administrator."*
+Log in as the non-admin user: banner text differs — *"Contact your
+administrator."*
+
+Note for the voiceover: on first install the SDK cache is briefly cold. The
+backend now answers `/api/replicated/updates` with `200 {status: pending}`
+during that window, so the admin sees a neutral "checking for updates" state
+instead of a 503 error toast.
 
 ### 4:40 – 5:00 — Close
 
@@ -133,3 +142,22 @@ Log in as the non-admin user: banner text differs — *"Contact your administrat
 
 - Cut expired-license demo (show the happy path and the entitlement toggle only)
 - Cut the non-admin banner variant
+
+## Friction notes (for the voiceover, optional)
+
+- The OCI install URL has the form `oci://<host>/<appSlug>/<channelSlug>/<chartName>`.
+  Skipping the channel slug or the chart name returns "unable to locate any
+  tags." ([FRICTION_LOG.md Entry 13](../../FRICTION_LOG.md#entry-13--2026-04-17--annoyance))
+- `helm registry login` makes Replicated inject `global.replicated.dockerconfigjson`,
+  `global.replicated.licenseID`, the full `replicated.*` SDK block, and license
+  fields with signatures into the chart's values. The chart's own
+  `values.yaml` shows these as empty strings, which strongly implies they are
+  developer-supplied. They are not. ([Entry 26](../../FRICTION_LOG.md#entry-26--2026-04-20--blocker))
+- The proxy registry path includes the upstream registry verbatim:
+  `proxy.<custom-domain>/proxy/<appSlug>/<upstream>/<org>/<image>`. Trying
+  `proxy.<host>/<org>/<image>` returns 400 with "All requested scope names
+  are invalid." ([Entry 17](../../FRICTION_LOG.md#entry-17--2026-04-17--blocker))
+- `replicated customer download-license` returns 403 for Helm-only customers
+  ("KOTS installer disabled for customer"). For Helm-only flows, parse
+  `licenseId` out of `replicated customer ls --output json` instead.
+  ([Entry 25](../../FRICTION_LOG.md#entry-25--2026-04-20--blocker))

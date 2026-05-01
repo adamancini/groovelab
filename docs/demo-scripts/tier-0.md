@@ -45,31 +45,44 @@ curl -s http://localhost:18080/healthz | jq
 > "Four pods — frontend, backend, CloudNativePG Postgres, and Valkey for
 > cache. Health endpoint reports database and redis both OK."
 
-### 0:45 – 1:45 — Flashcards as a guest
+### 0:45 – 1:55 — Flashcards as a guest
 
 Browser → `/learn`:
 1. Grid of topic cards — call out mastery dots (12/card) and accuracy %.
 2. Click **Major Chords**.
-3. Answer one correctly — green feedback, explanation, Continue.
-4. Answer one wrong — point out the framing: "The correct answer is…"
-   not "Wrong!" — we deliberately keep punishment language out.
-5. Click **Skip** — next card appears, no accuracy hit.
-6. Finish a short session → summary (accuracy, streak, new/reviewed),
+3. Question stage: a chord-shape diagram renders below the question text.
+   Call out the mini fretboard layout — root + chord type as the label,
+   one voicing per row, all in the user's current tuning.
+4. Answer one correctly — green feedback, explanation, Continue.
+5. Answer one wrong — the feedback view shows two things side by side: the
+   correct positions on the fretboard you just tapped, plus the chord-shape
+   diagram with valid voicings. Framing: "The correct answer is…" — no
+   punishment language.
+6. Switch to an **Intervals** topic. The chord-shape diagram does not render
+   here; intervals are key-agnostic and have no chord shape.
+7. Click **Skip** — next card appears, no accuracy hit.
+8. Finish a short session → summary (accuracy, streak, new/reviewed),
    non-blocking "Sign in to save your progress" prompt.
 
-### 1:45 – 2:45 — Fretboard reference
+### 1:55 – 2:55 — Fretboard reference and shared tuning
 
 Browser → `/fretboard`:
 1. Standard 4-string bass, open strings G-D-A-E.
 2. Click open **G** — every G on the board highlights cyan.
 3. Scale dropdown → **Major**, key **C** — members filled, non-members dim,
-   tonic in amber with a double ring. Call out: distinction is not
-   color-only, tonic is shape-differentiated for accessibility.
+   tonic in amber with a double ring. The distinction is not color-only;
+   tonic shape differs for accessibility.
 4. String-count button → **5** — fretboard re-renders instantly.
 5. Tuning dropdown → **Drop D** — low string opens on D.
 6. **Custom** → change one string inline — updates live.
 
-### 2:45 – 3:45 — Registration and admin
+Now navigate back to `/learn` and start a chord session. The chord-shape
+diagram and the fret-tap input both render in the new 5-string Drop-D tuning.
+
+> "One InstrumentContext, every fretboard view stays in sync. Switch your
+> tuning once and the flashcards follow."
+
+### 2:55 – 3:55 — Registration and admin
 
 Browser → sign-in page:
 1. Register a brand-new user. Log in.
@@ -80,7 +93,7 @@ Browser → sign-in page:
 5. Log out, register a second user, log in. No Admin Panel link in the
    avatar dropdown — RBAC works.
 
-### 3:45 – 4:15 — Resilience beat (optional, can cut if tight)
+### 3:55 – 4:15 — Resilience beat (optional, can cut if tight)
 
 Terminal:
 ```bash
@@ -94,12 +107,30 @@ curl -s http://localhost:18080/healthz | jq .status
 
 ### 4:15 – 4:30 — Close
 
-> "Tier 0 delivered the app — flashcards, fretboard, admin, first-party
-> dependencies, health probe, pod-level resilience. Tier 1 puts CI/CD
-> and signed images in front of this. Thanks for watching."
+> "Tier 0 delivered the app: flashcards with chord-shape hints, a fretboard
+> reference, an admin panel, first-party dependencies, health probe,
+> pod-level resilience, and tuning state shared across every view. Tier 1
+> puts CI/CD and signed images in front of this. Thanks for watching."
 
 ## Beats to cut if you run long
 
 - Resilience section (4th priority)
-- Custom tuning demo (keep the preset switch only)
+- Custom tuning inline edit (keep the preset switch only)
 - Second-user RBAC check (show only that first user is admin)
+- Tuning-follows-flashcards beat (mention in voiceover)
+
+## Friction notes (for the voiceover, optional)
+
+Three things in this stack look the way they do because we paid for them in
+debugging time. Pick one if a beat runs short:
+
+- The backend's `DB_HOST` points at `groovelab-postgresql-rw`, not
+  `groovelab-postgresql`. CNPG creates `<cluster>-rw`, `<cluster>-r`, and
+  `<cluster>-ro` services — never a plain `<cluster>` service.
+  ([FRICTION_LOG.md Entry 18](../../FRICTION_LOG.md#entry-18--2026-04-17--blocker))
+- The CNPG bootstrap secret has a `lookup` guard so the password survives
+  `helm upgrade`. Without it, every upgrade rewrites the password and the
+  backend fails authentication. ([Entry 9](../../FRICTION_LOG.md#entry-9--2026-04-16--annoyance))
+- The frontend's `transformSessionCard` exists because the backend's wire
+  shape and the React component's props diverged. The transform is the
+  contract boundary. ([Entry 24](../../FRICTION_LOG.md#entry-24--2026-04-17--blocker))

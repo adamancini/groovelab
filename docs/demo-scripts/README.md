@@ -6,11 +6,12 @@ budgets per beat so the total stays under 5 minutes.
 
 | Tier | Focus | Script |
 |------|-------|--------|
-| 0 | Build It — walking skeleton, flashcards, fretboard, admin panel | [tier-0.md](tier-0.md) |
-| 1 | Automate It — CI/CD, Cosign, RBAC, Stable gating | [tier-1.md](tier-1.md) |
+| 0 | Build It — walking skeleton, flashcards with chord diagrams, fretboard, admin panel | [tier-0.md](tier-0.md) |
+| 1 | Automate It — parallel CI, matrix builds, Cosign, shared CMX cluster, Stable gating | [tier-1.md](tier-1.md) |
 | 2 | Ship It with Helm — SDK, image proxy, entitlements, update banner | [tier-2.md](tier-2.md) |
 | 3 | Support It — preflights, support bundles, admin UI | [tier-3.md](tier-3.md) |
 | 4 | Ship It on VM — Embedded Cluster, KOTS admin, in-place upgrade | [tier-4.md](tier-4.md) |
+| 5 | Config Screen — KOTS Admin Console form, validated fields, generated defaults | [tier-5.md](tier-5.md) |
 
 ## Recording Conventions
 

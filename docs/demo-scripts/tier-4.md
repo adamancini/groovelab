@@ -109,10 +109,11 @@ KOTS's license-field cache rather than the SDK entitlement poll.
 
 ### 4:45 – 5:00 — Close
 
-> "One script, bare VM, end-to-end Kubernetes-plus-app, KOTS admin, gated
-> by license fields, and an in-place upgrade that kept all the user data
-> intact. That's the end of the distribution delivery for Groovelab.
-> Thanks for watching."
+> "One script, bare VM, end-to-end Kubernetes-plus-app, KOTS admin, gated by
+> license fields, and an in-place upgrade that kept user data intact. Tier 5
+> adds a Config Screen on top of this — operators choose embedded versus
+> external Postgres, set session limits, toggle guest access, all from the
+> Admin Console. Thanks for watching."
 
 ## Beats to cut if you run long
 
@@ -127,3 +128,17 @@ KOTS's license-field cache rather than the SDK entitlement poll.
 - [ ] Second release (`2.0.0`) pre-created, unpromoted
 - [ ] SSH tunnel command copy-pasted into history
 - [ ] Admin-console credentials handy
+
+## Friction notes (for the voiceover, optional)
+
+- The chart includes a `wait-for-crds` Job because Helm v4 does not
+  guarantee CRD installation order across subcharts in a single
+  `helm install`. Without the wait-for-crds pattern, `Cluster
+  postgresql.cnpg.io/v1` resources fail with "no matches for kind."
+  Embedded Cluster inherits this guarantee from the chart.
+  ([FRICTION_LOG.md Entry 12](../../FRICTION_LOG.md#entry-12--2026-04-17--blocker-worked-around))
+- Helm v4 downloads subchart `.tgz` files but does not extract them.
+  `helm template` and `helm install` then silently drop subchart
+  resources. Either extract the tarballs or use `--dependency-update`.
+  CI handles this; KOTS handles this; a developer running plain
+  `helm install` from `chart/` does not. ([Entry 5](../../FRICTION_LOG.md#entry-5--2026-04-15--blocker-worked-around))
