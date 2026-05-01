@@ -28,6 +28,7 @@ CHART_TGZ := $(DIST_DIR)/$(APP_SLUG)-$(CHART_VERSION).tgz
 
 .PHONY: help chart-deps chart-package chart-lint release-lint lint \
         clean clean-dist clean-release clean-charts \
+        check-version-sync \
         release-unstable \
         pr-slug pr-channel pr-customer pr-cluster pr-install pr-test pr-teardown \
         build build-frontend build-backend release \
@@ -59,8 +60,13 @@ help: ## Show available targets
 	@echo ""
 	@echo "Build & release:"
 	@echo "  make build VERSION=0.1.3           # build + push frontend and backend images"
-	@echo "  make release VERSION=v0.1.3        # tag + push (CI takes over from there)"
-	@echo "  make release-unstable VERSION=v0.1.3   # local Replicated release on Unstable"
+	@echo "  make release                       # dev-loop: build + package + publish to Unstable"
+	@echo "                                     #           VERSION = <chart-version>+<sha7>; no git mutations"
+	@echo "  make release CHANNEL=feat/topic    # dev-loop on a feature channel (slug-normalized)"
+	@echo "  make release VERSION=0.1.3 PUSH=1  # CI mode: bump Chart.yaml + helmchart.yaml,"
+	@echo "                                     #          commit, tag v0.1.3, push (CI takes over)"
+	@echo "  make release-unstable              # alias for: make release CHANNEL=Unstable"
+	@echo "  make check-version-sync            # read-only: verify Chart.yaml and helmchart.yaml agree"
 	@echo ""
 	@echo "Deploy & UAT (any cluster, any customer):"
 	@echo "  make customer NAME=uat-v0.1.3 CHANNEL=Unstable"
@@ -101,9 +107,29 @@ release-lint: _require-token chart-deps ## Run `replicated release lint` on pack
 	echo ""; \
 	echo "OK: release lint clean."
 
-lint: chart-lint release-lint ## Run helm lint AND replicated release lint (both)
+lint: check-version-sync chart-lint release-lint ## Run check-version-sync + helm lint + replicated release lint
 	@echo ""
 	@echo "OK: all linters green."
+
+# check-version-sync: read-only guard ensuring chart/Chart.yaml.version and
+# release/helmchart.yaml.spec.chart.chartVersion are equal. Wired into `make
+# lint` so CI / pre-commit / local lint all reject drift between the two
+# version sources of truth. Never mutates either file. Exit 0 on match,
+# exit 2 on mismatch with both labeled values printed.
+check-version-sync: ## Verify chart/Chart.yaml.version equals release/helmchart.yaml.spec.chart.chartVersion (read-only)
+	@set -euo pipefail; \
+	CHART_V=$$(yq -r '.version' $(CHART_DIR)/Chart.yaml); \
+	HELM_V=$$(yq -r '.spec.chart.chartVersion' $(RELEASE_DIR)/helmchart.yaml); \
+	if [ "$$CHART_V" = "$$HELM_V" ]; then \
+	  echo "OK: chart/Chart.yaml.version == release/helmchart.yaml.spec.chart.chartVersion ($$CHART_V)"; \
+	  exit 0; \
+	fi; \
+	echo "ERROR: chart version drift detected." >&2; \
+	echo "  chart/Chart.yaml.version                          = $$CHART_V" >&2; \
+	echo "  release/helmchart.yaml.spec.chart.chartVersion    = $$HELM_V" >&2; \
+	echo "" >&2; \
+	echo "Fix: bump both files to the same value, then re-run 'make check-version-sync'." >&2; \
+	exit 2
 
 chart-package: chart-deps ## Package chart/ into dist/groovelab-<version>.tgz (reads version from Chart.yaml)
 	@mkdir -p $(DIST_DIR)
@@ -177,44 +203,15 @@ clean: clean-dist clean-release clean-charts ## Cascade clean-dist + clean-relea
 	@echo "OK: working tree clean. Run 'make chart-deps' to repopulate $(CHART_DIR)/charts/ before chart-lint or release."
 
 # ---------------------------------------------------------------------------
-# release-unstable: end-to-end local equivalent of the release-unstable
-# GitHub Actions job. Bumps Chart.yaml + release/helmchart.yaml to VERSION,
-# packages chart, creates a Replicated release on Unstable, passing the
-# packaged chart via --chart and KOTS CRs via --yaml-dir release/.
-#
-# Usage:
-#   make release-unstable VERSION=v0.1.1
+# release-unstable: thin alias for `make release CHANNEL=Unstable`. Kept for
+# back-compat with docs / CI / muscle-memory; the real implementation lives in
+# the unified `release` target below (dev-loop default + optional PUSH=1 CI
+# mode). See GRO-lxiv. The single-tarball invariant called out above is
+# enforced by `make release` itself (which runs `clean-release` before
+# `helm package`), so no separate `rm -f` is needed in this alias.
 # ---------------------------------------------------------------------------
-release-unstable: _require-version _require-token chart-lint ## Cut a local Unstable release (requires VERSION=vX.Y.Z and REPLICATED_API_TOKEN)
-	@set -euo pipefail; \
-	CHART_SEMVER="$${VERSION#v}"; \
-	APP_VERSION="$${VERSION}"; \
-	echo "==> Syncing $(CHART_DIR)/Chart.yaml to version=$${CHART_SEMVER} appVersion=$${APP_VERSION}"; \
-	yq -i ".version = \"$${CHART_SEMVER}\"" $(CHART_DIR)/Chart.yaml; \
-	yq -i ".appVersion = \"$${APP_VERSION}\"" $(CHART_DIR)/Chart.yaml; \
-	echo "==> Syncing $(RELEASE_DIR)/helmchart.yaml chartVersion=$${CHART_SEMVER}"; \
-	yq -i ".spec.chart.chartVersion = \"$${CHART_SEMVER}\"" $(RELEASE_DIR)/helmchart.yaml; \
-	echo "==> Updating chart dependencies"; \
-	helm dependency update $(CHART_DIR); \
-	echo "==> Packaging chart into $(RELEASE_DIR)/ (co-located with KOTS CRs for --yaml-dir)"; \
-	rm -f $(RELEASE_DIR)/$(APP_SLUG)-*.tgz; \
-	helm package $(CHART_DIR) --destination $(RELEASE_DIR); \
-	CHART_TGZ="$(RELEASE_DIR)/$(APP_SLUG)-$${CHART_SEMVER}.tgz"; \
-	echo "==> Verifying helpers preserved in $${CHART_TGZ}"; \
-	tar tzf "$${CHART_TGZ}" | grep -E '(_helpers\.tpl|NOTES\.txt)$$' >/dev/null || { \
-		echo "FAIL: packaged chart missing _helpers.tpl or NOTES.txt"; \
-		rm -f "$${CHART_TGZ}"; \
-		exit 1; \
-	}; \
-	trap 'rm -f $${CHART_TGZ}' EXIT; \
-	echo "==> Creating Replicated release on Unstable"; \
-	replicated release create \
-		--yaml-dir $(RELEASE_DIR) \
-		--promote Unstable \
-		--version "$${VERSION}" \
-		--app $(APP_SLUG); \
-	echo ""; \
-	echo "OK: release $${VERSION} promoted to Unstable (app: $(APP_SLUG))."
+release-unstable: ## Alias for `make release CHANNEL=Unstable` (back-compat)
+	@$(MAKE) release CHANNEL=Unstable $(if $(VERSION),VERSION=$(VERSION),) $(if $(PUSH),PUSH=$(PUSH),)
 
 _require-version:
 	@if [ -z "$${VERSION:-}" ]; then \
@@ -560,27 +557,169 @@ build-frontend: _require-version ## Build and push frontend image for VERSION
 	@echo "OK: $(GHCR_FRONTEND):$(APP_VER) pushed."
 
 # ---------- release --------------------------------------------------------
+#
+# Two paths through the same target (GRO-lxiv):
+#
+#   1. DEV-LOOP DEFAULT (`make release`, no PUSH):
+#        - VERSION = `<chart-version>+<sha7>` (build-metadata SemVer) unless
+#          the user overrides VERSION explicitly.
+#        - CHANNEL defaults to Unstable; CHANNEL=feat/topic gets normalized
+#          through scripts/replicated-slug.sh to a Replicated-friendly slug.
+#        - Builds + pushes images, packages chart with --version/--app-version
+#          (no on-disk Chart.yaml mutation), and `replicated release create`s.
+#        - Working tree stays clean. No git commits, no tags, no pushes.
+#
+#   2. CI / PUBLISH MODE (`make release VERSION=0.1.3 PUSH=1`):
+#        - The ONLY mode that mutates files / commits / tags / pushes.
+#        - VERSION must be a clean SemVer (no pre-release, no build metadata)
+#          and is enforced by `_require-version-tag`.
+#        - Refuses on dirty tree, non-main branch, or pre-existing tag.
+#        - Bumps chart/Chart.yaml + release/helmchart.yaml in lockstep,
+#          commits, tags v$VERSION, pushes branch + tag. CI release.yaml then
+#          takes over (build → Cosign-OIDC sign → release create → promote).
+#        - Local does NOT call `replicated release create` here — CI is the
+#          source of truth in PUSH=1 mode.
+# ---------------------------------------------------------------------------
 
-release: _require-version-tag ## Tag main with VERSION and push (CI release.yaml takes over)
+# Lazy-evaluated helpers so `make help` / unrelated targets don't pay for
+# the git or yq invocations.
+RELEASE_CHART_VERSION = $(shell yq -r '.version' $(CHART_DIR)/Chart.yaml)
+RELEASE_SHA7 = $(shell git rev-parse --short HEAD)
+RELEASE_BRANCH = $(shell git rev-parse --abbrev-ref HEAD)
+# RELEASE_VERSION: explicit VERSION wins; otherwise default to
+# `<chart-version>+<sha7>` per SemVer build-metadata convention. The leading
+# `v` is stripped if present so chart/Chart.yaml.version stays SemVer-clean.
+RELEASE_VERSION = $(if $(VERSION),$(VERSION:v%=%),$(RELEASE_CHART_VERSION)+$(RELEASE_SHA7))
+
+release: ## Dev-loop release to Unstable (default) OR CI publish mode (PUSH=1)
+	@set -euo pipefail; \
+	if [ "$${PUSH:-}" = "1" ]; then \
+	  $(MAKE) _release-push; \
+	else \
+	  $(MAKE) _release-dev; \
+	fi
+
+# ---------- release: dev-loop path ----------------------------------------
+
+.PHONY: _release-dev _release-push
+
+_release-dev: _require-token chart-deps ## (internal) Dev-loop publish to Unstable / feature channel; no git mutations
+	@set -euo pipefail; \
+	CHANNEL="$${CHANNEL:-Unstable}"; \
+	if [ "$$CHANNEL" = "Unstable" ] || [ "$$CHANNEL" = "Stable" ]; then \
+	  CHANNEL_SLUG="$$CHANNEL"; \
+	else \
+	  CHANNEL_SLUG=$$(./scripts/replicated-slug.sh --branch "$$CHANNEL"); \
+	  if [ -z "$$CHANNEL_SLUG" ]; then \
+	    echo "ERROR: CHANNEL=$$CHANNEL normalized to empty slug." >&2; exit 2; \
+	  fi; \
+	fi; \
+	REL_VERSION="$(RELEASE_VERSION)"; \
+	REL_VERSION_TAG=$$(printf '%s' "$$REL_VERSION" | tr '+' '_'); \
+	APP_VER="v$$REL_VERSION_TAG"; \
+	echo "==> Dev-loop release"; \
+	echo "    chart-version (Chart.yaml on-disk):       $(RELEASE_CHART_VERSION)"; \
+	echo "    sha7:                                     $(RELEASE_SHA7)"; \
+	echo "    release VERSION (chart SemVer, with +):   $$REL_VERSION"; \
+	echo "    image / OCI tag (+ → _ for OCI/Docker):   $$REL_VERSION_TAG"; \
+	echo "    appVersion (image tag wired into chart):  $$APP_VER"; \
+	echo "    CHANNEL:                                  $$CHANNEL"; \
+	echo "    CHANNEL_SLUG (replicated channel name):   $$CHANNEL_SLUG"; \
+	echo "==> Building + pushing images for $$APP_VER"; \
+	$(MAKE) build VERSION="$$REL_VERSION_TAG"; \
+	if [ "$$CHANNEL_SLUG" != "Unstable" ] && [ "$$CHANNEL_SLUG" != "Stable" ]; then \
+	  echo "==> Ensuring channel $$CHANNEL_SLUG exists on Replicated (idempotent)"; \
+	  EXISTING=$$(replicated channel ls --app "$(APP_SLUG)" --output json \
+	    | jq -r --arg n "$$CHANNEL_SLUG" '.[] | select(.name == $$n) | .id // empty'); \
+	  if [ -z "$$EXISTING" ]; then \
+	    replicated channel create --name "$$CHANNEL_SLUG" --app "$(APP_SLUG)" --output json >/dev/null; \
+	    echo "OK: channel $$CHANNEL_SLUG created"; \
+	  else \
+	    echo "OK: reusing channel $$CHANNEL_SLUG (id: $$EXISTING)"; \
+	  fi; \
+	fi; \
+	echo "==> Single-tarball invariant: clearing $(RELEASE_DIR)/$(APP_SLUG)-*.tgz"; \
+	rm -f $(RELEASE_DIR)/$(APP_SLUG)-*.tgz; \
+	echo "==> helm package $(CHART_DIR) --version $$REL_VERSION --app-version $$APP_VER --destination $(RELEASE_DIR)"; \
+	helm package $(CHART_DIR) \
+	  --version "$$REL_VERSION" \
+	  --app-version "$$APP_VER" \
+	  --destination $(RELEASE_DIR) >/dev/null; \
+	REL_TGZ="$(RELEASE_DIR)/$(APP_SLUG)-$$REL_VERSION.tgz"; \
+	if [ ! -f "$$REL_TGZ" ]; then \
+	  echo "ERROR: expected $$REL_TGZ not found after helm package" >&2; exit 1; \
+	fi; \
+	echo "==> Verifying helpers preserved in $$REL_TGZ"; \
+	tar tzf "$$REL_TGZ" | grep -E '(_helpers\.tpl|NOTES\.txt)$$' >/dev/null || { \
+	  echo "FAIL: packaged chart missing _helpers.tpl or NOTES.txt" >&2; exit 1; \
+	}; \
+	echo "==> replicated release create --yaml-dir $(RELEASE_DIR) --promote $$CHANNEL_SLUG --version $$REL_VERSION"; \
+	if ! replicated release create \
+	    --yaml-dir $(RELEASE_DIR) \
+	    --promote "$$CHANNEL_SLUG" \
+	    --version "$$REL_VERSION" \
+	    --app "$(APP_SLUG)"; then \
+	  echo "" >&2; \
+	  echo "NOTE: if this rejected the '+' in the version, retry with VERSION=$$REL_VERSION_TAG (the OCI-safe form)." >&2; \
+	  exit 1; \
+	fi; \
+	echo ""; \
+	echo "OK: $$REL_VERSION published to channel $$CHANNEL_SLUG (app: $(APP_SLUG))."; \
+	echo ""; \
+	echo "Install (license-injected):"; \
+	echo "  helm registry login registry.replicated.com -u <license-id> -p <license-id>"; \
+	echo "  helm install $(APP_SLUG) oci://registry.replicated.com/$(APP_SLUG)/$$(echo $$CHANNEL_SLUG | tr '[:upper:]' '[:lower:]')/$(APP_SLUG) \\"; \
+	echo "    --version $$REL_VERSION"
+
+# ---------- release: PUSH=1 (CI publish) path -----------------------------
+
+_release-push: _require-version-tag ## (internal) PUSH=1 mode: bump chart files, commit, tag, push (CI takes over)
 	@set -euo pipefail; \
 	if ! git diff --quiet || ! git diff --cached --quiet; then \
-	  echo "ERROR: working tree is dirty. Commit or stash before releasing."; \
+	  echo "ERROR: working tree is dirty. Commit or stash before releasing." >&2; \
 	  exit 1; \
 	fi; \
 	CUR=$$(git rev-parse --abbrev-ref HEAD); \
 	if [ "$$CUR" != "main" ]; then \
-	  echo "ERROR: release must be cut from main; currently on $$CUR."; \
+	  echo "ERROR: release must be cut from main; currently on $$CUR." >&2; \
 	  exit 1; \
 	fi; \
-	if git rev-parse "$(VERSION)" >/dev/null 2>&1; then \
-	  echo "ERROR: tag $(VERSION) already exists."; exit 1; \
+	TAG="$(VERSION)"; \
+	case "$$TAG" in \
+	  v*) ;; \
+	  *) TAG="v$$TAG" ;; \
+	esac; \
+	if git rev-parse "$$TAG" >/dev/null 2>&1; then \
+	  echo "ERROR: tag $$TAG already exists locally." >&2; exit 1; \
 	fi; \
-	echo "==> Annotating tag $(VERSION) and pushing to origin"; \
-	git tag -a "$(VERSION)" -m "Release $(VERSION)"; \
-	git push origin "$(VERSION)"; \
+	if git ls-remote --tags origin "$$TAG" 2>/dev/null | grep -q "refs/tags/$$TAG"; then \
+	  echo "ERROR: tag $$TAG already exists on origin." >&2; exit 1; \
+	fi; \
+	CHART_SEMVER="$${TAG#v}"; \
+	APP_VERSION="$$TAG"; \
+	echo "==> PUSH=1 mode: bumping chart files for $$TAG"; \
+	echo "    $(CHART_DIR)/Chart.yaml: version=$$CHART_SEMVER appVersion=$$APP_VERSION"; \
+	yq -i ".version = \"$$CHART_SEMVER\"" $(CHART_DIR)/Chart.yaml; \
+	yq -i ".appVersion = \"$$APP_VERSION\"" $(CHART_DIR)/Chart.yaml; \
+	echo "    $(RELEASE_DIR)/helmchart.yaml: spec.chart.chartVersion=$$CHART_SEMVER"; \
+	yq -i ".spec.chart.chartVersion = \"$$CHART_SEMVER\"" $(RELEASE_DIR)/helmchart.yaml; \
+	echo "==> Verifying check-version-sync after bump"; \
+	$(MAKE) --no-print-directory check-version-sync; \
+	echo "==> git add chart/Chart.yaml release/helmchart.yaml"; \
+	git add $(CHART_DIR)/Chart.yaml $(RELEASE_DIR)/helmchart.yaml; \
+	echo "==> git commit -m 'release: $$TAG'"; \
+	git commit -m "release: $$TAG"; \
+	echo "==> git tag -a $$TAG -m 'Release $$TAG'"; \
+	git tag -a "$$TAG" -m "Release $$TAG"; \
+	echo "==> git push origin main && git push origin $$TAG"; \
+	git push origin main; \
+	git push origin "$$TAG"; \
 	echo ""; \
-	echo "OK: tag $(VERSION) pushed. CI release.yaml is now running."; \
-	echo "Watch it: gh run watch \$$(gh run list --workflow=release.yaml --limit 1 --json databaseId -q '.[0].databaseId')"
+	echo "OK: $$TAG pushed. CI release.yaml is now running."; \
+	echo "Watch:  gh run watch \$$(gh run list --workflow=release.yaml --limit 1 --json databaseId -q '.[0].databaseId')"; \
+	echo ""; \
+	echo "Promote to Stable (after Unstable validation):"; \
+	echo "  gh workflow run promote-stable.yaml -f version=$$TAG"
 
 # ---------- customer / cluster primitives ----------------------------------
 
