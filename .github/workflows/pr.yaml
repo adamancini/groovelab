@@ -811,7 +811,16 @@ jobs:
           # kubectl with timestamped lines and a 5m deadline, and dumps
           # `kubectl describe pods` on timeout. That's strictly better
           # observability than a silent `helm install --wait` deadline.
-          helm install "${APP_SLUG}" "$OCI_URL" \
+          #
+          # `helm upgrade --install` (not bare `helm install`) is the
+          # idempotent verb required by the GRO-e4wb medium-life cluster
+          # lifecycle: PR re-runs reuse the same namespace, so a second push
+          # to the same PR would otherwise hit
+          #   `release name check failed: cannot reuse a name that is still
+          #    in use`.
+          # `upgrade --install` no-ops to install on first run and upgrades
+          # on every subsequent run, which is what we want.
+          helm upgrade --install "${APP_SLUG}" "$OCI_URL" \
             --version "$CHART_VERSION" \
             --namespace "$NAMESPACE" --create-namespace \
             --set cloudnative-pg.enabled=false \
