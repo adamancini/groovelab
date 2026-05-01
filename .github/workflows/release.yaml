@@ -206,13 +206,12 @@ jobs:
           echo "Chart dependencies resolved:"
           ls -la chart/charts/
 
+      # GRO-mf1d: pinned, deduplicated install via local composite action
+      # (.github/actions/setup-replicated-cli). The previous inline pattern
+      # called api.github.com/.../releases/latest, which was rate-limited and
+      # silently chased the newest CLI release.
       - name: Install Replicated CLI
-        run: |
-          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
-            | grep "browser_download_url.*linux_amd64.tar.gz" \
-            | cut -d '"' -f 4 \
-            | xargs curl -sL \
-            | tar xz -C /usr/local/bin replicated
+        uses: ./.github/actions/setup-replicated-cli
 
       - name: Sync Chart.yaml version to tag
         # Rewrites chart/Chart.yaml so `version` matches the tag without its
@@ -626,13 +625,12 @@ jobs:
         id: job_start
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      # GRO-mf1d: pinned, deduplicated install via local composite action
+      # (.github/actions/setup-replicated-cli). The previous inline pattern
+      # called api.github.com/.../releases/latest, which was rate-limited and
+      # silently chased the newest CLI release.
       - name: Install Replicated CLI
-        run: |
-          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
-            | grep "browser_download_url.*linux_amd64.tar.gz" \
-            | cut -d '"' -f 4 \
-            | xargs curl -sL \
-            | tar xz -C /usr/local/bin replicated
+        uses: ./.github/actions/setup-replicated-cli
 
       - name: Promote release to Stable
         run: |
