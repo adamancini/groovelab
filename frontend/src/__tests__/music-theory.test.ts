@@ -15,7 +15,10 @@ import {
   DEFAULT_TUNING_PRESETS,
   buildFretboardNotes,
   stringName,
+  getChordVoicings,
+  type ScaleChordDef,
 } from "../lib/music-theory";
+import type { FretboardPosition } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // normalizeNote
@@ -298,6 +301,242 @@ describe("SCALE_CHORD_LIBRARY", () => {
       for (const interval of def.intervals) {
         expect(interval).toBeGreaterThanOrEqual(0);
         expect(interval).toBeLessThanOrEqual(11);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// getChordVoicings
+// ---------------------------------------------------------------------------
+
+const findChord = (name: string): ScaleChordDef => {
+  const def = SCALE_CHORD_LIBRARY.find(
+    (d) => d.name === name && d.type === "chord",
+  );
+  if (!def) throw new Error(`Test fixture missing chord: ${name}`);
+  return def;
+};
+
+const voicingNotes = (
+  voicing: FretboardPosition[],
+  tuning: string[],
+): Set<string> => {
+  return new Set(
+    voicing.map((p) => noteAtFret(tuning[p.string], p.fret) as string),
+  );
+};
+
+const voicingNonOpenSpan = (voicing: FretboardPosition[]): number => {
+  const nonOpen = voicing.filter((p) => p.fret > 0).map((p) => p.fret);
+  if (nonOpen.length === 0) return 0;
+  return Math.max(...nonOpen) - Math.min(...nonOpen);
+};
+
+const voicingKey = (voicing: FretboardPosition[]): string =>
+  voicing
+    .map((p) => `${p.string}:${p.fret}`)
+    .slice()
+    .sort()
+    .join("|");
+
+describe("getChordVoicings", () => {
+  const standard4 = ["G", "D", "A", "E"];
+  const standard5 = ["G", "D", "A", "E", "B"];
+
+  it("returns at least one voicing for C Major Triad on 4-string bass", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4);
+    expect(voicings.length).toBeGreaterThan(0);
+  });
+
+  it("every C Major Triad voicing contains exactly the notes {C, E, G}", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4);
+    expect(voicings.length).toBeGreaterThan(0);
+    const expected = new Set(["C", "E", "G"]);
+    for (const v of voicings) {
+      expect(voicingNotes(v, standard4)).toEqual(expected);
+    }
+  });
+
+  it("every C Major Triad voicing uses 3 distinct strings", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4);
+    for (const v of voicings) {
+      expect(v.length).toBe(3);
+      const strings = new Set(v.map((p) => p.string));
+      expect(strings.size).toBe(3);
+    }
+  });
+
+  it("every C Major Triad voicing spans <=4 frets ignoring open strings", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4);
+    for (const v of voicings) {
+      expect(voicingNonOpenSpan(v)).toBeLessThanOrEqual(4);
+    }
+  });
+
+  it("returns at least one A Minor Triad voicing containing {A, C, E}", () => {
+    const def = findChord("Minor Triad");
+    const voicings = getChordVoicings("A", def, standard4);
+    expect(voicings.length).toBeGreaterThan(0);
+    const expected = new Set(["A", "C", "E"]);
+    const hasMatch = voicings.some(
+      (v) =>
+        v.length === 3 &&
+        voicingNotes(v, standard4).size === 3 &&
+        [...voicingNotes(v, standard4)].every((n) => expected.has(n)),
+    );
+    expect(hasMatch).toBe(true);
+  });
+
+  it("D Dominant 7th returns at least one voicing with {D, F#, A, C}", () => {
+    const def = findChord("Dominant 7th");
+    const voicings = getChordVoicings("D", def, standard4);
+    expect(voicings.length).toBeGreaterThan(0);
+    const expected = new Set(["D", "F#", "A", "C"]);
+    const hasMatch = voicings.some(
+      (v) =>
+        v.length === 4 &&
+        [...voicingNotes(v, standard4)].length === 4 &&
+        [...voicingNotes(v, standard4)].every((n) => expected.has(n)),
+    );
+    expect(hasMatch).toBe(true);
+  });
+
+  it("every D Dominant 7th voicing uses exactly 4 distinct strings", () => {
+    const def = findChord("Dominant 7th");
+    const voicings = getChordVoicings("D", def, standard4);
+    for (const v of voicings) {
+      expect(v.length).toBe(4);
+      const strings = new Set(v.map((p) => p.string));
+      expect(strings.size).toBe(4);
+    }
+  });
+
+  it("C Major Triad on 5-string returns more voicings than on 4-string", () => {
+    const def = findChord("Major Triad");
+    // Default limit may clamp both; use a generous limit so the search-space
+    // difference is visible.
+    const four = getChordVoicings("C", def, standard4, { limit: 100 });
+    const five = getChordVoicings("C", def, standard5, { limit: 100 });
+    expect(five.length).toBeGreaterThan(four.length);
+  });
+
+  it("returned voicings are unique by sorted string:fret tokens", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4, { limit: 100 });
+    const keys = voicings.map(voicingKey);
+    const uniqueKeys = new Set(keys);
+    expect(uniqueKeys.size).toBe(keys.length);
+  });
+
+  it("returns [] when chord cannot fit in the constraints", () => {
+    // C# Major Triad (C#, F, G#) on standard4 bass (G/D/A/E):
+    //  - none of the open strings are chord tones, so open positions can't
+    //    contribute,
+    //  - at any single fret, the four strings (perfect-4th-tuned) produce
+    //    four notes 5 semitones apart from each neighbor, which never aligns
+    //    with the 4-3 semitone spacing of a major triad.
+    //  - with maxSpan=0, every non-open position must share a single fret,
+    //    so no valid voicing exists.
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C#", def, standard4, { maxSpan: 0 });
+    expect(voicings).toEqual([]);
+  });
+
+  it("respects opts.limit", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4, { limit: 2 });
+    expect(voicings.length).toBeLessThanOrEqual(2);
+  });
+
+  it("respects opts.maxFret", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4, {
+      maxFret: 5,
+      limit: 100,
+    });
+    for (const v of voicings) {
+      for (const p of v) {
+        expect(p.fret).toBeLessThanOrEqual(5);
+      }
+    }
+  });
+
+  it("is a pure function: same inputs produce structurally equal outputs", () => {
+    const def = findChord("Major Triad");
+    const a = getChordVoicings("C", def, standard4);
+    const b = getChordVoicings("C", def, standard4);
+    expect(a).toEqual(b);
+  });
+
+  it("labels each position with the chord-tone note name", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4);
+    expect(voicings.length).toBeGreaterThan(0);
+    for (const v of voicings) {
+      for (const p of v) {
+        const expectedNote = noteAtFret(standard4[p.string], p.fret);
+        expect(p.label).toBe(expectedNote);
+      }
+    }
+  });
+
+  it("does not throw on enharmonic root (Db normalizes to C#)", () => {
+    const def = findChord("Major Triad");
+    expect(() => getChordVoicings("Db", def, standard4)).not.toThrow();
+    const dbVoicings = getChordVoicings("Db", def, standard4, { limit: 100 });
+    const csharpVoicings = getChordVoicings("C#", def, standard4, {
+      limit: 100,
+    });
+    expect(dbVoicings).toEqual(csharpVoicings);
+  });
+
+  it("voicings are sorted by (lowest fret asc, total span asc)", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4, { limit: 100 });
+    expect(voicings.length).toBeGreaterThan(1);
+    const lowestFret = (v: FretboardPosition[]) =>
+      Math.min(...v.map((p) => p.fret));
+    const totalSpan = (v: FretboardPosition[]) => {
+      const frets = v.map((p) => p.fret);
+      return Math.max(...frets) - Math.min(...frets);
+    };
+    for (let i = 1; i < voicings.length; i++) {
+      const prev = voicings[i - 1];
+      const cur = voicings[i];
+      const prevLow = lowestFret(prev);
+      const curLow = lowestFret(cur);
+      if (prevLow === curLow) {
+        expect(totalSpan(prev)).toBeLessThanOrEqual(totalSpan(cur));
+      } else {
+        expect(prevLow).toBeLessThanOrEqual(curLow);
+      }
+    }
+  });
+
+  it("never returns voicings missing any chord tone", () => {
+    const def = findChord("Dominant 7th");
+    const voicings = getChordVoicings("G", def, standard4, { limit: 100 });
+    const expected = getScaleChordNotes(def, "G");
+    for (const v of voicings) {
+      expect(voicingNotes(v, standard4)).toEqual(
+        new Set([...expected]) as Set<string>,
+      );
+    }
+  });
+
+  it("never returns voicings with notes outside the chord", () => {
+    const def = findChord("Major Triad");
+    const voicings = getChordVoicings("C", def, standard4, { limit: 100 });
+    const expected = new Set(["C", "E", "G"]);
+    for (const v of voicings) {
+      for (const p of v) {
+        const note = noteAtFret(standard4[p.string], p.fret) as string;
+        expect(expected.has(note)).toBe(true);
       }
     }
   });
