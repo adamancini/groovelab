@@ -9,6 +9,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { BrowserRouter, MemoryRouter, Route, Routes } from "react-router";
 import { AuthProvider } from "../context/AuthContext";
+import { InstrumentProvider } from "../context/InstrumentContext";
 import { ThemeProvider } from "../context/ThemeContext";
 import Learn from "../pages/Learn";
 import FlashcardSession from "../pages/FlashcardSession";
@@ -203,9 +204,22 @@ function renderWithProviders(ui: React.ReactElement) {
   return render(
     <ThemeProvider>
       <AuthProvider>
-        <BrowserRouter>{ui}</BrowserRouter>
+        <InstrumentProvider>
+          <BrowserRouter>{ui}</BrowserRouter>
+        </InstrumentProvider>
       </AuthProvider>
     </ThemeProvider>,
+  );
+}
+
+/** Wrap a component in AuthProvider + InstrumentProvider so that components
+ *  consuming useInstrument() (FretboardTap, AnswerFeedback after GRO-05pv)
+ *  can mount in isolated unit tests. */
+function renderWithInstrument(ui: React.ReactElement) {
+  return render(
+    <AuthProvider>
+      <InstrumentProvider>{ui}</InstrumentProvider>
+    </AuthProvider>,
   );
 }
 
@@ -214,11 +228,13 @@ function renderSessionWithProviders(topic = "major-chords") {
   return render(
     <ThemeProvider>
       <AuthProvider>
-        <MemoryRouter initialEntries={[`/learn/${topic}`]}>
-          <Routes>
-            <Route path="/learn/:topic" element={<FlashcardSession />} />
-          </Routes>
-        </MemoryRouter>
+        <InstrumentProvider>
+          <MemoryRouter initialEntries={[`/learn/${topic}`]}>
+            <Routes>
+              <Route path="/learn/:topic" element={<FlashcardSession />} />
+            </Routes>
+          </MemoryRouter>
+        </InstrumentProvider>
       </AuthProvider>
     </ThemeProvider>,
   );
@@ -490,7 +506,7 @@ describe("normalizeAnswer (forgiving parser)", () => {
 describe("FretboardTap", () => {
   it("renders fretboard with Submit and Clear buttons", () => {
     const onSubmit = vi.fn();
-    render(<FretboardTap onSubmit={onSubmit} />);
+    renderWithInstrument(<FretboardTap onSubmit={onSubmit} />);
 
     expect(screen.getByTestId("fretboard-tap")).toBeInTheDocument();
     expect(screen.getByTestId("fretboard")).toBeInTheDocument();
@@ -500,7 +516,7 @@ describe("FretboardTap", () => {
 
   it("highlights tapped positions", () => {
     const onSubmit = vi.fn();
-    render(<FretboardTap onSubmit={onSubmit} />);
+    renderWithInstrument(<FretboardTap onSubmit={onSubmit} />);
 
     // Tap a fret position
     const fretCell = screen.getByTestId("fret-1-3");
@@ -512,7 +528,7 @@ describe("FretboardTap", () => {
 
   it("clears selected positions", () => {
     const onSubmit = vi.fn();
-    render(<FretboardTap onSubmit={onSubmit} />);
+    renderWithInstrument(<FretboardTap onSubmit={onSubmit} />);
 
     fireEvent.click(screen.getByTestId("fret-1-3"));
     expect(screen.getByText("1 position selected")).toBeInTheDocument();
@@ -523,7 +539,7 @@ describe("FretboardTap", () => {
 
   it("submits selected positions", () => {
     const onSubmit = vi.fn();
-    render(<FretboardTap onSubmit={onSubmit} />);
+    renderWithInstrument(<FretboardTap onSubmit={onSubmit} />);
 
     fireEvent.click(screen.getByTestId("fret-0-5"));
     fireEvent.click(screen.getByTestId("fret-1-3"));
@@ -537,7 +553,7 @@ describe("FretboardTap", () => {
 
   it("toggles position off when tapped again", () => {
     const onSubmit = vi.fn();
-    render(<FretboardTap onSubmit={onSubmit} />);
+    renderWithInstrument(<FretboardTap onSubmit={onSubmit} />);
 
     fireEvent.click(screen.getByTestId("fret-1-3"));
     expect(screen.getByText("1 position selected")).toBeInTheDocument();
@@ -548,7 +564,7 @@ describe("FretboardTap", () => {
 
   it("disables Submit when no positions are selected", () => {
     const onSubmit = vi.fn();
-    render(<FretboardTap onSubmit={onSubmit} />);
+    renderWithInstrument(<FretboardTap onSubmit={onSubmit} />);
 
     expect(screen.getByTestId("submit-fretboard")).toBeDisabled();
   });
@@ -593,7 +609,7 @@ describe("Fretboard", () => {
 describe("AnswerFeedback", () => {
   it("shows correct answer feedback with Continue button", () => {
     const onContinue = vi.fn();
-    render(
+    renderWithInstrument(
       <AnswerFeedback
         correct={true}
         correctAnswer="C E G"
@@ -611,7 +627,7 @@ describe("AnswerFeedback", () => {
 
   it("calls onContinue when Continue is clicked", () => {
     const onContinue = vi.fn();
-    render(
+    renderWithInstrument(
       <AnswerFeedback
         correct={true}
         correctAnswer="C E G"
@@ -626,7 +642,7 @@ describe("AnswerFeedback", () => {
 
   it("shows wrong answer teaching feedback without punishment language", () => {
     const onContinue = vi.fn();
-    render(
+    renderWithInstrument(
       <AnswerFeedback
         correct={false}
         correctAnswer="C E G"
@@ -657,7 +673,7 @@ describe("AnswerFeedback", () => {
   });
 
   it("shows mini fretboard on wrong answer with positions", () => {
-    render(
+    renderWithInstrument(
       <AnswerFeedback
         correct={false}
         correctAnswer="C E G"
@@ -674,7 +690,7 @@ describe("AnswerFeedback", () => {
   });
 
   it("does not show fretboard when no positions provided", () => {
-    render(
+    renderWithInstrument(
       <AnswerFeedback
         correct={false}
         correctAnswer="C E G"
@@ -687,7 +703,7 @@ describe("AnswerFeedback", () => {
   });
 
   it("has accessible status role", () => {
-    render(
+    renderWithInstrument(
       <AnswerFeedback
         correct={true}
         correctAnswer="A"
