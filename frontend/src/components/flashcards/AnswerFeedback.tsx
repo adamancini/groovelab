@@ -8,6 +8,7 @@
  */
 
 import Fretboard from "../Fretboard";
+import { useInstrument } from "../../context/InstrumentContext";
 import type { FretboardPosition } from "../../lib/api";
 
 export interface AnswerFeedbackProps {
@@ -27,6 +28,29 @@ export default function AnswerFeedback({
   correctPositions,
   onContinue,
 }: AnswerFeedbackProps) {
+  // GRO-05pv: read stringCount from InstrumentContext so the mini fretboard
+  // matches the user's instrument. The hook throws when used outside an
+  // InstrumentProvider, which is the desired failure mode.
+  const { stringCount } = useInstrument();
+
+  // AC #4: silently filter out any position whose string index is out of
+  // range for the current instrument. The backend currently emits positions
+  // assuming a 4-string layout; once it is tuning-aware we can drop this
+  // filter. We log a console.warn in dev to make the drop observable.
+  // TODO(GRO): make backend correctPositions tuning-aware so this filter
+  // becomes a no-op. See parent epic GRO-95ng.
+  const safePositions = correctPositions?.filter((p) => {
+    if (p.string >= stringCount) {
+      if (import.meta.env?.DEV) {
+        console.warn(
+          `[AnswerFeedback] dropping correct position string=${p.string} (>= stringCount ${stringCount})`,
+        );
+      }
+      return false;
+    }
+    return true;
+  });
+
   return (
     <div
       className={`rounded-lg border p-6 ${
@@ -85,12 +109,12 @@ export default function AnswerFeedback({
           <p className="text-text-secondary text-sm mb-4" data-testid="feedback-explanation">
             {explanation}
           </p>
-          {correctPositions && correctPositions.length > 0 && (
+          {safePositions && safePositions.length > 0 && (
             <div className="mb-4" data-testid="feedback-fretboard">
               <Fretboard
-                positions={correctPositions}
+                positions={safePositions}
                 size="mini"
-                strings={4}
+                strings={stringCount}
                 frets={12}
                 showFretNumbers={false}
                 className="max-w-md mx-auto"

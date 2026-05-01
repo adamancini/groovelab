@@ -10,6 +10,7 @@ import { render, screen, fireEvent, waitFor, act } from "@testing-library/react"
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { AuthProvider } from "../context/AuthContext";
+import { InstrumentProvider } from "../context/InstrumentContext";
 import { ThemeProvider } from "../context/ThemeContext";
 import FlashcardSession from "../pages/FlashcardSession";
 
@@ -129,11 +130,13 @@ function renderSession(topic = "major_chords") {
   return render(
     <ThemeProvider>
       <AuthProvider>
-        <MemoryRouter initialEntries={[`/learn/${topic}`]}>
-          <Routes>
-            <Route path="/learn/:topic" element={<FlashcardSession />} />
-          </Routes>
-        </MemoryRouter>
+        <InstrumentProvider>
+          <MemoryRouter initialEntries={[`/learn/${topic}`]}>
+            <Routes>
+              <Route path="/learn/:topic" element={<FlashcardSession />} />
+            </Routes>
+          </MemoryRouter>
+        </InstrumentProvider>
       </AuthProvider>
     </ThemeProvider>,
   );
