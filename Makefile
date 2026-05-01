@@ -26,7 +26,8 @@ DIST_DIR ?= dist
 CHART_VERSION := $(shell yq -r '.version' $(CHART_DIR)/Chart.yaml)
 CHART_TGZ := $(DIST_DIR)/$(APP_SLUG)-$(CHART_VERSION).tgz
 
-.PHONY: help chart-deps chart-package chart-lint release-lint lint clean-dist \
+.PHONY: help chart-deps chart-package chart-lint release-lint lint \
+        clean clean-dist clean-release clean-charts \
         release-unstable \
         pr-slug pr-channel pr-customer pr-cluster pr-install pr-test pr-teardown \
         build build-frontend build-backend release \
@@ -47,6 +48,14 @@ help: ## Show available targets
 	@echo "  make lint                          # helm lint + replicated release lint"
 	@echo "  make chart-lint                    # helm lint only"
 	@echo "  make release-lint                  # replicated release lint only (packages chart first)"
+	@echo ""
+	@echo "Clean (working-tree hygiene):"
+	@echo "  make clean                         # cascade: clean-dist + clean-release + clean-charts"
+	@echo "  make clean-dist                    # remove dist/ (packaged tarballs from chart-package)"
+	@echo "  make clean-release                 # remove release/groovelab-*.tgz only (KOTS CRs preserved)"
+	@echo "  make clean-charts                  # remove untracked chart/charts/*.tgz + extracted dirs"
+	@echo "  Note: after 'make clean', run 'make chart-deps' before 'helm lint' / 'make chart-lint' —"
+	@echo "        Helm v4 needs --dependency-update or pre-extracted subcharts to lint."
 	@echo ""
 	@echo "Build & release:"
 	@echo "  make build VERSION=0.1.3           # build + push frontend and backend images"
@@ -110,6 +119,64 @@ clean-dist: ## Remove dist/ (packaged chart tarballs)
 	rm -rf $(DIST_DIR)
 
 # ---------------------------------------------------------------------------
+# Single-tarball-before-package invariant
+#
+# Any target that runs `helm package --destination $(RELEASE_DIR)` MUST first
+# run `rm -f $(RELEASE_DIR)/$(APP_SLUG)-*.tgz`. `replicated release create
+# --yaml-dir release/` packages every tarball it finds in that directory into
+# the release manifest, so a stale tarball from a prior version would silently
+# corrupt the release. Targets that package into release/: release-lint,
+# release-unstable, pr-install. Each of them does the rm -f before helm
+# package; clean-release codifies the cleanup as a one-liner dependency for
+# any future packaging target.
+# ---------------------------------------------------------------------------
+
+clean-release: ## Remove only release/$(APP_SLUG)-*.tgz (preserves KOTS CRs)
+	@set -euo pipefail; \
+	REMOVED=$$(ls $(RELEASE_DIR)/$(APP_SLUG)-*.tgz 2>/dev/null || true); \
+	rm -f $(RELEASE_DIR)/$(APP_SLUG)-*.tgz; \
+	if [ -n "$$REMOVED" ]; then \
+	  echo "Removed packaged chart tarballs from $(RELEASE_DIR)/:"; \
+	  echo "$$REMOVED" | sed 's/^/  /'; \
+	else \
+	  echo "OK: no packaged chart tarballs to remove from $(RELEASE_DIR)/."; \
+	fi
+
+clean-charts: ## Remove untracked $(CHART_DIR)/charts/*.tgz and extracted subchart dirs (refuses if any tracked)
+	@set -euo pipefail; \
+	if [ ! -d $(CHART_DIR)/charts ]; then \
+	  echo "OK: $(CHART_DIR)/charts/ does not exist; nothing to clean."; \
+	  exit 0; \
+	fi; \
+	TRACKED=$$(git ls-files $(CHART_DIR)/charts/ 2>/dev/null || true); \
+	if [ -n "$$TRACKED" ]; then \
+	  echo "ERROR: $(CHART_DIR)/charts/ contains TRACKED files; refusing to clean."; \
+	  echo "       Tracked paths:"; \
+	  echo "$$TRACKED" | sed 's/^/         /'; \
+	  echo "       Investigate before manual cleanup. clean-charts only removes untracked artifacts."; \
+	  exit 1; \
+	fi; \
+	REMOVED_TGZ=$$(ls $(CHART_DIR)/charts/*.tgz 2>/dev/null || true); \
+	rm -f $(CHART_DIR)/charts/*.tgz; \
+	REMOVED_DIRS=""; \
+	for d in $(CHART_DIR)/charts/*/; do \
+	  [ -d "$$d" ] || continue; \
+	  REMOVED_DIRS="$$REMOVED_DIRS $$d"; \
+	  rm -rf "$$d"; \
+	done; \
+	if [ -n "$$REMOVED_TGZ" ] || [ -n "$$REMOVED_DIRS" ]; then \
+	  echo "Removed untracked artifacts from $(CHART_DIR)/charts/:"; \
+	  [ -n "$$REMOVED_TGZ" ] && echo "$$REMOVED_TGZ" | sed 's/^/  tgz: /'; \
+	  for d in $$REMOVED_DIRS; do echo "  dir: $$d"; done; \
+	else \
+	  echo "OK: no untracked artifacts in $(CHART_DIR)/charts/."; \
+	fi
+
+clean: clean-dist clean-release clean-charts ## Cascade clean-dist + clean-release + clean-charts (full reset of working artifacts)
+	@echo ""
+	@echo "OK: working tree clean. Run 'make chart-deps' to repopulate $(CHART_DIR)/charts/ before chart-lint or release."
+
+# ---------------------------------------------------------------------------
 # release-unstable: end-to-end local equivalent of the release-unstable
 # GitHub Actions job. Bumps Chart.yaml + release/helmchart.yaml to VERSION,
 # packages chart, creates a Replicated release on Unstable, passing the
@@ -130,6 +197,7 @@ release-unstable: _require-version _require-token chart-lint ## Cut a local Unst
 	echo "==> Updating chart dependencies"; \
 	helm dependency update $(CHART_DIR); \
 	echo "==> Packaging chart into $(RELEASE_DIR)/ (co-located with KOTS CRs for --yaml-dir)"; \
+	rm -f $(RELEASE_DIR)/$(APP_SLUG)-*.tgz; \
 	helm package $(CHART_DIR) --destination $(RELEASE_DIR); \
 	CHART_TGZ="$(RELEASE_DIR)/$(APP_SLUG)-$${CHART_SEMVER}.tgz"; \
 	echo "==> Verifying helpers preserved in $${CHART_TGZ}"; \
