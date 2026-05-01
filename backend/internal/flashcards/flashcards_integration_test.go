@@ -1253,3 +1253,150 @@ func TestCheckAnswer_IntervalsField(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &ans))
 	assert.False(t, ans.Correct, "bogus intervals should return correct=false")
 }
+
+// ---------- correct_positions Wire Tests (GRO-gq31) ----------
+
+// TestAnswer_ChordCardEmitsCorrectPositions verifies AC #1 / AC #2 / AC #3:
+// submitting any answer (correct OR wrong) to a chord-quality card returns a
+// non-empty correct_positions array on the wire payload, with each entry
+// shaped { string, fret, label? }.
+func TestAnswer_ChordCardEmitsCorrectPositions(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Start a guest session over a chord topic.
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(body, &session))
+	require.Greater(t, len(session.Cards), 0)
+
+	firstCard := session.Cards[0]
+
+	// Submit a wrong answer (the wrong-answer path is what AnswerFeedback
+	// renders the mini fretboard for in production).
+	answerReq := map[string]interface{}{
+		"card_id":      firstCard.ID,
+		"answer":       json.RawMessage(`{"name":"definitely wrong"}`),
+		"input_method": "multiple_choice",
+	}
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+	answerResp := postJSON(t, client, answerURL, answerReq)
+	answerBody := readBody(t, answerResp)
+	require.Equal(t, http.StatusOK, answerResp.StatusCode, "body=%s", string(answerBody))
+
+	var result flashcards.AnswerResponse
+	require.NoError(t, json.Unmarshal(answerBody, &result))
+	require.NotEmpty(t, result.CorrectPositions,
+		"chord-quality card must emit at least one correct_positions entry on the wire")
+
+	for _, p := range result.CorrectPositions {
+		assert.GreaterOrEqual(t, p.String, 0, "string index must be non-negative")
+		assert.GreaterOrEqual(t, p.Fret, 0, "fret must be non-negative")
+		assert.LessOrEqual(t, p.Fret, 12, "fret must be within the displayed window")
+	}
+
+	// Confirm the JSON tag is `correct_positions` (the frontend transform
+	// reads that exact key). Decode into a generic map and assert the key
+	// exists with a non-empty array.
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(answerBody, &raw))
+	cp, ok := raw["correct_positions"]
+	require.True(t, ok, "wire payload must carry correct_positions key")
+	cpArr, ok := cp.([]interface{})
+	require.True(t, ok, "correct_positions must be a JSON array, got %T", cp)
+	require.NotEmpty(t, cpArr, "correct_positions must be non-empty for chord cards")
+
+	// Each entry must be an object with at least a `string` and `fret` key.
+	first, ok := cpArr[0].(map[string]interface{})
+	require.True(t, ok, "correct_positions[0] must be an object")
+	_, hasString := first["string"]
+	_, hasFret := first["fret"]
+	assert.True(t, hasString, "position must carry a `string` field")
+	assert.True(t, hasFret, "position must carry a `fret` field")
+}
+
+// TestAnswer_NonChordCardOmitsCorrectPositions verifies AC #1 / AC #7: a
+// type_to_intervals card (no chord_type, no fretboard hint) must omit the
+// correct_positions field entirely, or emit it as an empty/null value, so the
+// frontend never renders the mini fretboard for these cards.
+func TestAnswer_NonChordCardOmitsCorrectPositions(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Start a guest session over the chord_intervals topic (type_to_intervals).
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=chord_intervals")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(body, &session))
+	require.Greater(t, len(session.Cards), 0)
+
+	firstCard := session.Cards[0]
+
+	answerReq := map[string]interface{}{
+		"card_id":      firstCard.ID,
+		"answer":       json.RawMessage(`{"intervals":"9-9-9-9"}`),
+		"input_method": "multiple_choice",
+	}
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+	answerResp := postJSON(t, client, answerURL, answerReq)
+	answerBody := readBody(t, answerResp)
+	require.Equal(t, http.StatusOK, answerResp.StatusCode, "body=%s", string(answerBody))
+
+	var result flashcards.AnswerResponse
+	require.NoError(t, json.Unmarshal(answerBody, &result))
+	assert.Empty(t, result.CorrectPositions,
+		"non-chord card must not emit correct_positions")
+
+	// At the wire level, the `omitempty` tag should drop the key entirely.
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(answerBody, &raw))
+	if cp, ok := raw["correct_positions"]; ok {
+		// If present, must be empty/null -- never a populated array.
+		if arr, isArr := cp.([]interface{}); isArr {
+			assert.Empty(t, arr, "correct_positions must be empty for non-chord cards")
+		} else {
+			assert.Nil(t, cp, "correct_positions must be null when present on non-chord cards")
+		}
+	}
+}
+
+// TestAnswer_CorrectAnswerOnChordCardStillEmitsPositions guards AC #6's
+// neighbour: even when the answer is correct, the wire payload still carries
+// the positions for the chord. The frontend gates rendering by `correct`,
+// not by the field's presence -- so the backend can emit unconditionally for
+// chord cards. This keeps the contract uniform and easy to reason about.
+func TestAnswer_CorrectAnswerOnChordCardStillEmitsPositions(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	resp := getJSON(t, client, env.server.URL+"/api/v1/flashcards/session?topic=major_chords")
+	body := readBody(t, resp)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	var session flashcards.SessionResponse
+	require.NoError(t, json.Unmarshal(body, &session))
+	require.Greater(t, len(session.Cards), 0)
+
+	firstCard := session.Cards[0]
+	answerReq := map[string]interface{}{
+		"card_id":      firstCard.ID,
+		"answer":       json.RawMessage(firstCard.CorrectAnswer),
+		"input_method": "multiple_choice",
+	}
+	answerURL := env.server.URL + "/api/v1/flashcards/answer?session_id=" + url.QueryEscape(session.SessionID)
+	answerResp := postJSON(t, client, answerURL, answerReq)
+	answerBody := readBody(t, answerResp)
+	require.Equal(t, http.StatusOK, answerResp.StatusCode)
+
+	var result flashcards.AnswerResponse
+	require.NoError(t, json.Unmarshal(answerBody, &result))
+	assert.True(t, result.Correct)
+	assert.NotEmpty(t, result.CorrectPositions,
+		"chord cards emit correct_positions on the wire regardless of correct/wrong; "+
+			"the UI gates rendering by `correct`")
+}

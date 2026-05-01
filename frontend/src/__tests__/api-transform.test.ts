@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fetchSession, resolveChordDefName } from "../lib/api";
+import { fetchSession, resolveChordDefName, submitAnswer } from "../lib/api";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn());
@@ -190,6 +190,95 @@ describe("transformSessionCard chord metadata", () => {
     const card = (await fetchSession("minor_chords")).cards[0];
     expect(card.topic).toBe("minor_chords");
     expect(card.chordDefName).toBe("Minor Triad");
+  });
+
+  // GRO-gq31: transformAnswerResponse must thread raw.correct_positions onto
+  // the returned AnswerResult so the AnswerFeedback feedback-fretboard mini
+  // board renders on the live API path. Tests defined here pin the contract.
+  it("threads correct_positions onto AnswerResult when present", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          correct: false,
+          correct_answer: { name: "C major", notes: "C E G" },
+          explanation: "Incorrect.",
+          session_progress: {
+            answered: 1,
+            total: 5,
+            correct: 0,
+            incorrect: 1,
+          },
+          correct_positions: [
+            { string: 3, fret: 3, label: "C" },
+            { string: 2, fret: 2, label: "E" },
+            { string: 0, fret: 0, label: "G" },
+          ],
+        }),
+    } as Response);
+
+    const result = await submitAnswer(
+      "card-id",
+      JSON.stringify({ name: "wrong" }),
+      "multiple_choice",
+      "session-id",
+    );
+
+    expect(result.correct_positions).toEqual([
+      { string: 3, fret: 3, label: "C" },
+      { string: 2, fret: 2, label: "E" },
+      { string: 0, fret: 0, label: "G" },
+    ]);
+  });
+
+  it("threads a single-position correct_positions array verbatim", async () => {
+    // AC #5: explicit "raw with correct_positions: [{ string: 6, fret: 3 }]"
+    // case from the bug spec.
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          correct: false,
+          correct_answer: { name: "x" },
+          explanation: "",
+          session_progress: { answered: 0, total: 0, correct: 0, incorrect: 0 },
+          correct_positions: [{ string: 6, fret: 3 }],
+        }),
+    } as Response);
+
+    const result = await submitAnswer("c", "{}", "multiple_choice", "s");
+    expect(result.correct_positions).toEqual([{ string: 6, fret: 3 }]);
+  });
+
+  it("leaves correct_positions undefined when the wire omits it", async () => {
+    (globalThis.fetch as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () =>
+        Promise.resolve({
+          correct: true,
+          correct_answer: { name: "C major" },
+          explanation: "Correct!",
+          session_progress: {
+            answered: 1,
+            total: 5,
+            correct: 1,
+            incorrect: 0,
+          },
+          // correct_positions intentionally omitted.
+        }),
+    } as Response);
+
+    const result = await submitAnswer(
+      "card-id",
+      JSON.stringify({ name: "C major" }),
+      "multiple_choice",
+      "session-id",
+    );
+
+    expect(result.correct_positions).toBeUndefined();
   });
 
   it("does not regress existing answer-key derivation or option-shuffle", async () => {
