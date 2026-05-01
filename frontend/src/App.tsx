@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from "react-router";
 import { AuthProvider } from "./context/AuthContext";
+import { InstrumentProvider } from "./context/InstrumentContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import NavBar from "./components/NavBar";
 import SkipLink from "./components/SkipLink";
@@ -23,7 +24,8 @@ export default function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <BrowserRouter>
+        <InstrumentProvider>
+          <BrowserRouter>
           <SkipLink />
           <UpdateBanner />
           <NavBar />
@@ -61,7 +63,8 @@ export default function App() {
               />
             </Routes>
           </main>
-        </BrowserRouter>
+          </BrowserRouter>
+        </InstrumentProvider>
       </AuthProvider>
     </ThemeProvider>
   );

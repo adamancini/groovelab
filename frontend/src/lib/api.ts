@@ -496,6 +496,32 @@ export function saveSettings(
   });
 }
 
+/** Settings payload returned by GET /api/v1/settings. */
+export interface UserSettings {
+  tuning?: string[];
+  stringCount?: number;
+}
+
+/** GET /api/v1/settings -- fetch the current user's saved settings.
+ *
+ *  Returns an empty object if the backend has not yet implemented this
+ *  endpoint (404). Other errors propagate so callers can decide how to
+ *  surface them.
+ */
+export async function fetchSettings(): Promise<UserSettings> {
+  try {
+    return await apiRequest<UserSettings>("/settings");
+  } catch (err) {
+    // 404 = backend has not implemented the endpoint yet; treat as
+    // "no saved settings" so the caller falls back to defaults.
+    if (err instanceof ApiError && err.status === 404) {
+      const empty: UserSettings = {};
+      return empty;
+    }
+    throw err;
+  }
+}
+
 // --------------- Progress endpoints ---------------
 
 /** A single topic mastery entry. */
