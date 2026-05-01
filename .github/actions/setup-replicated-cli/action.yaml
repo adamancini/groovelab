@@ -1,0 +1,28 @@
+name: Setup Replicated CLI
+description: >
+  Download and install a pinned version of the Replicated CLI to /usr/local/bin.
+  Replaces the previous `curl https://api.github.com/.../releases/latest | ...`
+  pattern that was duplicated across pr.yaml, release.yaml, and pr-cleanup.yaml
+  (GRO-mf1d). Pinning to an explicit version (default `inputs.version`) avoids
+  silent breakage when a new CLI release ships, and removes a dependency on
+  the anonymous api.github.com rate limit.
+inputs:
+  version:
+    description: >
+      Replicated CLI version to install (without leading `v`). Bump this
+      intentionally in its own PR -- do not chase `latest`.
+    required: false
+    default: "0.127.0"
+runs:
+  using: composite
+  steps:
+    - name: Download and install Replicated CLI
+      shell: bash
+      env:
+        REPLICATED_CLI_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+        URL="https://github.com/replicatedhq/replicated/releases/download/v${REPLICATED_CLI_VERSION}/replicated_${REPLICATED_CLI_VERSION}_linux_amd64.tar.gz"
+        echo "Installing Replicated CLI v${REPLICATED_CLI_VERSION} from ${URL}"
+        curl -sSL --fail "${URL}" | sudo tar xz -C /usr/local/bin replicated
+        replicated version
