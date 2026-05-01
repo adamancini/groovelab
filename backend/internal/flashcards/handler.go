@@ -301,12 +301,19 @@ func (h *Handler) handleAnswer(w http.ResponseWriter, r *http.Request) {
 	// auth sessions carry a card list, so next_card is available for both.
 	nextCard := h.getSessionNextCard(sessionID)
 
+	// Compute the canonical fretboard voicing for chord-quality cards so the
+	// frontend AnswerFeedback teaching mini fretboard can render on wrong
+	// answers. ComputeChordPositions returns nil for non-chord cards, which
+	// the omitempty json tag drops from the wire payload. See GRO-gq31.
+	correctPositions := ComputeChordPositions(card)
+
 	resp := AnswerResponse{
-		Correct:         correct,
-		CorrectAnswer:   card.CorrectAnswer,
-		Explanation:     explanation,
-		NextCard:        nextCard,
-		SessionProgress: progress,
+		Correct:          correct,
+		CorrectAnswer:    card.CorrectAnswer,
+		Explanation:      explanation,
+		NextCard:         nextCard,
+		SessionProgress:  progress,
+		CorrectPositions: correctPositions,
 	}
 
 	writeJSON(w, http.StatusOK, resp)

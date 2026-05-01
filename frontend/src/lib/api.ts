@@ -105,6 +105,14 @@ interface RawAnswerResponse {
   explanation: string;
   next_card?: RawSessionCard;
   session_progress: { answered: number; total: number; correct: number; incorrect: number };
+  /**
+   * Canonical chord voicing for the answer card, emitted by the backend on
+   * chord-quality cards (omitted for non-chord cards). Threaded through
+   * transformAnswerResponse onto AnswerResult.correct_positions so the
+   * AnswerFeedback `feedback-fretboard` mini board renders on wrong answers.
+   * See GRO-gq31.
+   */
+  correct_positions?: FretboardPosition[];
 }
 
 function shuffle<T>(arr: T[]): T[] {
@@ -233,6 +241,12 @@ function transformAnswerResponse(raw: RawAnswerResponse): AnswerResult {
       new_cards: 0,
       review_cards: 0,
     },
+    // GRO-gq31: thread raw.correct_positions onto AnswerResult so the
+    // AnswerFeedback `feedback-fretboard` mini board can render. The
+    // backend emits this field for chord-quality cards only; the omitempty
+    // tag drops it for non-chord cards, which leaves correct_positions
+    // undefined here (the desired no-op for the AnswerFeedback gating).
+    correct_positions: raw.correct_positions,
   };
 }
 

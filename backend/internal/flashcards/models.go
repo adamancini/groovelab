@@ -71,11 +71,34 @@ type AnswerRequest struct {
 
 // AnswerResponse is the JSON response from POST /api/v1/flashcards/answer.
 type AnswerResponse struct {
-	Correct        bool            `json:"correct"`
-	CorrectAnswer  json.RawMessage `json:"correct_answer"`
-	Explanation    string          `json:"explanation"`
-	NextCard       *SessionCard    `json:"next_card,omitempty"`
-	SessionProgress SessionProgress `json:"session_progress"`
+	Correct          bool                `json:"correct"`
+	CorrectAnswer    json.RawMessage     `json:"correct_answer"`
+	Explanation      string              `json:"explanation"`
+	NextCard         *SessionCard        `json:"next_card,omitempty"`
+	SessionProgress  SessionProgress     `json:"session_progress"`
+	// CorrectPositions is the canonical voicing for a chord-quality card,
+	// emitted so the frontend AnswerFeedback's `feedback-fretboard` mini
+	// board can render the correct shape on the wrong-answer teaching
+	// surface. Omitted entirely (omitempty) for non-chord cards (e.g.
+	// type_to_intervals). The wire shape mirrors the frontend
+	// FretboardPosition interface in frontend/src/lib/api.ts. See GRO-gq31.
+	CorrectPositions []FretboardPosition `json:"correct_positions,omitempty"`
+}
+
+// FretboardPosition is a single position on the fretboard, used to convey the
+// canonical voicing of a chord answer to the frontend. Wire shape matches the
+// frontend FretboardPosition TS type:
+//
+//	{ "string": <int>, "fret": <int>, "label": <string?> }
+//
+// `string` is the 0-indexed string number (string 0 is the highest-pitched
+// string). `fret` is 0-indexed (0 = open). `label` is the chord-tone name
+// (e.g. "C", "E", "G"). The label is informational; the frontend renders the
+// fret position regardless.
+type FretboardPosition struct {
+	String int    `json:"string"`
+	Fret   int    `json:"fret"`
+	Label  string `json:"label,omitempty"`
 }
 
 // SessionProgress describes how far along a session the user is.
