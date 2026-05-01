@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
 
 interface UpdateInfo {
+  // GRO-xyqx: backend may return a typed pending envelope when the SDK
+  // sidecar has not yet polled. We detect that explicitly rather than
+  // mistaking it for a real update payload.
+  status?: "pending" | "ready";
+  reason?: string;
   versionLabel?: string;
   isDeployable?: boolean;
 }
@@ -16,8 +21,9 @@ export default function UpdateBanner() {
   useEffect(() => {
     // Only query the Replicated SDK for authenticated users. On pre-auth
     // routes (/auth/register, /auth/signin) the endpoint has no reason to be
-    // called, and its 503-on-cold-cache response shows up as a console error
-    // that misleads debugging.
+    // called. The backend now returns 200 with status=pending on cold cache
+    // (see GRO-xyqx) so this no longer logs a console error, but skipping
+    // pre-auth still avoids a needless request.
     if (!user) {
       return;
     }
@@ -36,7 +42,15 @@ export default function UpdateBanner() {
         return res.json() as Promise<UpdateInfo>;
       })
       .then((data) => {
-        if (!cancelled && data && data.versionLabel) {
+        // Skip the pending envelope -- it means the SDK has not polled yet,
+        // not that an update is available. Only show the banner when we have
+        // a populated versionLabel.
+        if (
+          !cancelled &&
+          data &&
+          data.status !== "pending" &&
+          data.versionLabel
+        ) {
           setUpdate(data);
         }
       })

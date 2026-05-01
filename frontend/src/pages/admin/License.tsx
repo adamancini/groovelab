@@ -6,9 +6,14 @@ interface Entitlement {
 }
 
 interface LicenseData {
-  license_id: string;
-  license_type: string;
-  expires_at: string;
+  // GRO-xyqx: cold-cache responses now arrive as 200 with a typed pending
+  // envelope. The page renders a "loading" state for pending and only shows
+  // license details once we have real data.
+  status?: "pending" | "ready";
+  reason?: string;
+  license_id?: string;
+  license_type?: string;
+  expires_at?: string;
   entitlements?: Entitlement[];
 }
 
@@ -101,16 +106,19 @@ export default function License() {
     );
   }
 
-  if (!license) {
+  if (!license || license.status === "pending") {
     return (
       <div>
         <h1 className="text-text-primary mb-6 text-2xl font-bold">License</h1>
-        <p className="text-text-secondary">No license data available.</p>
+        <p className="text-text-secondary" data-testid="license-pending">
+          The Replicated SDK has not yet reported license info. Try again in a
+          moment.
+        </p>
       </div>
     );
   }
 
-  const health = getHealthStatus(license.expires_at);
+  const health = getHealthStatus(license.expires_at ?? "");
 
   return (
     <div>
