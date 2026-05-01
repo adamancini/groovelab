@@ -260,8 +260,17 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=${{ matrix.service }}-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ github.workflow }}
+          # GRO-n9bk: registry-backed buildx cache. Branch-independent (vs
+          # type=gha which scopes per-ref + branch and is aggressively evicted
+          # under GHA's 10GB-per-repo budget). Cache layers are pushed to
+          # `groovelab-<service>:buildcache` on GHCR, sharing across PRs and
+          # main. Per-image ref keeps frontend and backend caches independent.
+          # `image-manifest=true,oci-mediatypes=true` is required for GHCR
+          # compatibility with the registry cache exporter.
+          cache-from: |
+            type=registry,ref=${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:buildcache
+          cache-to: |
+            type=registry,ref=${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
