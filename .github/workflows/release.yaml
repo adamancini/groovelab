@@ -166,6 +166,20 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      # GRO-sm7y: cache resolved subchart tarballs keyed on Chart.lock hash.
+      # Mirrors pr.yaml helm-lint and cmx-test caches. `Package chart into
+      # release/` and `Install CNPG operator` both run `helm dependency
+      # update chart/`; on cache hit the subchart tarballs are already on
+      # disk so the dep-update is a no-op (~10-30s saved per run when
+      # Chart.lock is unchanged).
+      - name: Cache helm chart deps
+        uses: actions/cache@v4
+        with:
+          path: chart/charts
+          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
+          restore-keys: |
+            helm-deps-${{ runner.os }}-
+
       # GRO-uqtg: single point-of-truth for chart-dep resolution in this job.
       # Previously each step that needed extracted subcharts called
       # `helm dependency update chart/` itself, which re-ran registry lookups
