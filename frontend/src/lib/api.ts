@@ -44,6 +44,24 @@ export interface Flashcard {
   chordNotes: string | null;
   /** Card direction ("name_to_notes" | "notes_to_name" | "type_to_intervals"). */
   direction: string;
+  /**
+   * Chord root note (e.g. "C", "F#"), sourced from the backend
+   * key_signature field. Null when the card has no key (e.g. interval
+   * cards). Consumers: ChordDiagram (GRO-z1e3, GRO-nhmm).
+   */
+  chordRoot: string | null;
+  /**
+   * SCALE_CHORD_LIBRARY entry name (e.g. "Major Triad", "Dominant 7th").
+   * Null when the card is not a chord card or the wire chord_type is
+   * unrecognised. Resolved from backend chord_type via resolveChordDefName.
+   */
+  chordDefName: string | null;
+  /**
+   * Topic slug this card belongs to (e.g. "major_chords", "intervals").
+   * Falls back to the session-level topic when the card itself does not
+   * carry one. Surfaced to support topic-aware UI affordances.
+   */
+  topic: string | null;
 }
 
 // --------------- Raw backend wire types (not exported) ---------------
@@ -62,6 +80,16 @@ interface RawSessionCard {
   distractors?: RawAnswerData[];
   stage: number;
   options: number; // count, NOT an array
+  /** Chord root, e.g. "C", "F#". Sent on every session card by the backend
+   *  (SessionCard embeds Card -- see backend/internal/flashcards/models.go).
+   *  May be empty for non-keyed cards. */
+  key_signature?: string;
+  /** Human-readable chord type, e.g. "major", "dominant 7th". Null/absent
+   *  for non-chord cards (scales, note positions). */
+  chord_type?: string | null;
+  /** Optional per-card topic override. When absent, the card inherits the
+   *  session-level topic. */
+  topic?: string;
 }
 
 interface RawSessionResponse {
@@ -88,7 +116,46 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function transformSessionCard(raw: RawSessionCard): Flashcard {
+/**
+ * Map the backend's human-readable chord_type wire string onto the entry
+ * name used by SCALE_CHORD_LIBRARY in src/lib/music-theory.ts. Returns
+ * null for null/undefined/unknown inputs so callers can branch without
+ * throwing.
+ *
+ * The mapping is intentionally one-way and case-sensitive: only the seven
+ * wire strings the backend emits are accepted. Library entries themselves
+ * are not renamed (see GRO-8sya). Adding a new chord type means adding it
+ * here and in the SCALE_CHORD_LIBRARY -- but never renaming an existing
+ * library entry.
+ */
+export function resolveChordDefName(
+  wireChordType: string | null | undefined,
+): string | null {
+  if (wireChordType == null) return null;
+  switch (wireChordType) {
+    case "major":
+      return "Major Triad";
+    case "minor":
+      return "Minor Triad";
+    case "dominant 7th":
+      return "Dominant 7th";
+    case "major 7th":
+      return "Major 7th";
+    case "minor 7th":
+      return "Minor 7th";
+    case "diminished":
+      return "Diminished";
+    case "augmented":
+      return "Augmented";
+    default:
+      return null;
+  }
+}
+
+function transformSessionCard(
+  raw: RawSessionCard,
+  sessionTopic: string | null = null,
+): Flashcard {
   const questionText = raw.question.prompt;
   // Answer axis varies by direction:
   //   name_to_notes    -> options are notes strings
@@ -125,6 +192,16 @@ function transformSessionCard(raw: RawSessionCard): Flashcard {
       ? null
       : ((raw.correct_answer.notes as string | undefined) ?? null);
 
+  // Chord metadata for downstream chord-rendering UI (GRO-z1e3, GRO-nhmm).
+  // The backend ALWAYS emits key_signature on session cards, but it may be
+  // an empty string for key-agnostic cards (e.g. type_to_intervals). Treat
+  // an empty string the same as missing -- chordRoot becomes null.
+  const rawRoot = raw.key_signature;
+  const chordRoot = rawRoot != null && rawRoot !== "" ? rawRoot : null;
+  const chordDefName = resolveChordDefName(raw.chord_type);
+  // Card-level topic wins; otherwise inherit the session topic.
+  const topic = raw.topic ?? sessionTopic;
+
   return {
     id: raw.id,
     question: questionText,
@@ -134,6 +211,9 @@ function transformSessionCard(raw: RawSessionCard): Flashcard {
     _optionAnswers: optionAnswers,
     chordNotes,
     direction: raw.direction,
+    chordRoot,
+    chordDefName,
+    topic,
   };
 }
 
@@ -302,7 +382,7 @@ export async function fetchSession(topic: string): Promise<FlashcardSession> {
   return {
     session_id: raw.session_id,
     topic: raw.topic,
-    cards: raw.cards.map(transformSessionCard),
+    cards: raw.cards.map((c) => transformSessionCard(c, raw.topic ?? null)),
   };
 }
 
