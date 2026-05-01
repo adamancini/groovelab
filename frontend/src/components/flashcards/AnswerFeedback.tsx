@@ -8,6 +8,7 @@
  */
 
 import Fretboard from "../Fretboard";
+import ChordDiagram from "./ChordDiagram";
 import { useInstrument } from "../../context/InstrumentContext";
 import type { FretboardPosition } from "../../lib/api";
 
@@ -17,6 +18,13 @@ export interface AnswerFeedbackProps {
   explanation: string;
   /** Fretboard positions for the correct answer (shown on wrong answers). */
   correctPositions?: FretboardPosition[];
+  /** Chord root for the chord-shape teaching-moment hint (GRO-nhmm).
+   *  Null on non-chord cards. The hint renders only on wrong answers, and
+   *  only when both chordRoot AND chordDefName are non-null. */
+  chordRoot?: string | null;
+  /** SCALE_CHORD_LIBRARY entry name for the teaching-moment hint (GRO-nhmm).
+   *  Null on non-chord cards. */
+  chordDefName?: string | null;
   /** Called when the user clicks Continue/Got it. */
   onContinue: () => void;
 }
@@ -26,6 +34,8 @@ export default function AnswerFeedback({
   correctAnswer,
   explanation,
   correctPositions,
+  chordRoot,
+  chordDefName,
   onContinue,
 }: AnswerFeedbackProps) {
   // GRO-05pv: read stringCount from InstrumentContext so the mini fretboard
@@ -118,6 +128,19 @@ export default function AnswerFeedback({
                 frets={12}
                 showFretNumbers={false}
                 className="max-w-md mx-auto"
+              />
+            </div>
+          )}
+          {/* Teaching-moment chord-shape hint (GRO-nhmm). Only on wrong
+              answers (we're already in the !correct branch) AND only when
+              the card carries chord metadata. The diagram is in addition
+              to (not in place of) the correctPositions mini fretboard. */}
+          {chordRoot && chordDefName && (
+            <div className="mb-4">
+              <ChordDiagram
+                chordRoot={chordRoot}
+                chordDefName={chordDefName}
+                maxVoicings={3}
               />
             </div>
           )}
