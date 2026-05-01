@@ -1,9 +1,23 @@
+---
+# Embedded Cluster configuration for groovelab.
+#
+# spec.version pins the Embedded Cluster release this chart is tested
+# against. EC versions follow the form `<ec-semver>+k8s-<minor>`; pick one
+# whose Kubernetes minor matches what `pr.yaml` and `release.yaml` use for
+# their CMX cluster (currently k8s 1.34).
+#
+# Coupling to chart version: the EC version is part of the release artifact,
+# checked in alongside the chart, the helmchart CR, and the application CR.
+# Bump it deliberately when the chart is tested against a newer EC release.
+# CI does not rewrite this field — what's checked in is what gets packaged.
+#
+# Available versions: https://github.com/replicatedhq/embedded-cluster/releases
 apiVersion: embeddedcluster.replicated.com/v1beta1
 kind: Config
 metadata:
   name: groovelab
 spec:
-  version: ""
+  version: 2.17.0+k8s-1.34
   roles:
     controller:
       name: controller

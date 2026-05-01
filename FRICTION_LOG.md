@@ -339,3 +339,57 @@ The CLI (`replicated customer update --kots-install=false --channel ... --email 
 **Actual:** Renovate's Dependency Dashboard on the repo shows 26 open PRs immediately after scaffolding, spanning several majors: Node 22→24, Go 1.25→1.26, Postgres 16→18, Redis 7→8, valkey 8→9, ESLint 9→10, Vite 6→8, TypeScript 5.8→6, @vitejs/plugin-react 4→6, eslint-plugin-react-hooks 5→7, eslint-plugin-react-refresh 0.4→0.5, and a pile of GitHub Actions at v3/v4 when v5/v6/v7 are current. The agent's training data bias pushes every default one or two majors behind current. Without Renovate (or dependabot) wired in from day one, we wouldn't have noticed until a CVE or a broken API forced the upgrade.
 **Resolution:** Renovate caught it because it was enabled up front. Open PRs will be merged as a background task. For future bootcamps / greenfield scaffolding I want to: (a) run Renovate/dependabot on the first commit so drift is visible immediately, (b) explicitly tell the scaffolding agent "use the latest stable major of every dep, and verify with `npm view <pkg> version` / `gh api repos/<owner>/<repo>/releases/latest`" rather than relying on training defaults, (c) treat a green Renovate dashboard as part of "Tier 0 done."
 **Severity:** annoyance
+
+## Entry 33 — 2026-05-01 — blocker
+
+**Trying to:** Pull and install the freshly promoted v0.1.2 release on a UAT cluster using `helm install oci://registry.replicated.com/groovelab/unstable/groovelab` (no `--version` flag), which is what an end-customer's documentation would copy-paste.
+
+**Expected:** With sequence 131 (v0.1.2) promoted to the Unstable channel, an unpinned `helm pull` or `helm install` against the channel's OCI URL would resolve to v0.1.2.
+
+**Actual:** Every unpinned pull returned `v99.99.99` — a stale CMX gate-test release left on the channel from prior CI work. The OCI registry's "latest" resolution uses SemVer precedence (https://semver.org/#spec-item-11), not most-recently-promoted: `99.99.99 > 0.1.2`, so v99.99.99 wins forever. `replicated channel inspect Unstable` mirrored the same display (showed `VERSION: v99.99.99`), reinforcing the misread that the promote had silently failed. It had not — `helm pull oci://... --version 0.1.2` resolved correctly. The semver-max release was the actual head from the perspective of any unpinned client.
+
+**Resolution:** Two action items, both upstream of UAT: (1) test/dev/gate-test releases must use pre-release identifiers (`v0.0.0-test.<sha>`, `v0.1.2-rc.1`, etc.) so they stay below production versions in semver precedence, never above. Plain `v9.9.9` or `v99.99.99` poisons the channel for every subsequent real release. (2) The release.yaml smoke test installs from a local chart tarball rather than `helm install oci://` against the channel, which is why it never noticed the channel head was a fossil. Tier 1 / release-workflow stories should add an end-of-pipeline customer-grade pull as part of the smoke step, exactly so a stuck "latest" tag fails the release rather than UAT. For the immediate v0.1.2 UAT, archive or demote the v99.99.99 release before retrying the unpinned install path.
+
+**Severity:** blocker
+
+## Entry 34 — 2026-05-01 — blocker
+
+**Trying to:** Test the `promote-stable` guard in `release.yaml`, which skips publishing tags that contain `-` or `+` (i.e. SemVer pre-release or build metadata).
+
+**Expected:** A coding agent asked to "tag the repo with a fake version to verify the guard rejects it" would pick a SemVer pre-release qualifier — `v0.0.0-gate-test` or `v0.1.0-rc.1` — that stays below any real release in SemVer precedence and cannot become the channel's "latest" pointer.
+
+**Actual:** The agent picked `v9.9.9-gate-test-dev` and `v99.99.99` — clean SemVer numerals as high as anyone would ever push. The guard worked correctly and blocked promotion to Stable, but the v99.99.99 release landed on the Unstable channel via the workflow's `--promote Unstable` flag. From that moment on, `helm pull oci://registry.replicated.com/groovelab/unstable/groovelab` (no `--version` flag) returns v99.99.99 forever, because OCI registry "latest" resolves by SemVer precedence (https://semver.org/#spec-item-11) and `99.99.99 > anything-real`. We discovered this only at UAT for v0.1.2, when the unpinned customer-grade `helm install` documented in our own demo scripts pulled the fossil instead of the new release.
+
+**Resolution:** Pending. Two parts:
+1. Demote v99.99.99 from Unstable via the Vendor Portal UI (admin permission; CI service-account token is denied for `channel demote`).
+2. Codify a project rule that test/dev/gate-test tags must use SemVer pre-release identifiers (`v0.0.0-test.<sha>`, `v<real>-rc.<n>`) so they cannot win SemVer-latest resolution. Update `CLAUDE.md` Non-Negotiables and any future "test the guard" prompts to a coding agent. The `pr.yaml` workflow already does the right thing — per-PR versions use `0.0.0-pr${PR_NUMBER}` — so the prevention pattern exists; it just wasn't applied to the manual-tag gate-test flow.
+
+**Severity:** blocker
+
+## Entry 35 — 2026-05-01 — blocker
+
+**Trying to:** After demoting v99.99.99 from the Unstable channel via the Vendor Portal, re-run an unpinned `helm pull oci://registry.replicated.com/groovelab/unstable/groovelab` so the customer-grade install path resolves to v0.1.2.
+
+**Expected:** With v99.99.99 no longer on Unstable (`replicated channel inspect Unstable` confirms `RELEASE: 131`, `VERSION: v0.1.2`), the OCI registry would also drop v99.99.99 from the channel's tag space, and the unpinned pull would resolve to v0.1.2 — the channel head.
+
+**Actual:** Channel-level demotion does not remove the release from the OCI registry's tag space. v99.99.99 is still pullable by `helm pull oci://.../unstable/groovelab` because it exists in the registry as a tagged artifact, and SemVer-max resolution picks across ALL existing tags rather than only channel-active ones. The Vendor Portal's "demote" verb removes a release from a channel's history (so KOTS / Helm upgrade notifications stop seeing it), but does not delete or untag the OCI artifact. To make the unpinned customer install path resolve to the channel head, the polluting release must be either fully archived/deleted from the registry, OR the channel must use distinct OCI repository paths per release (Replicated does not currently expose a per-release OCI URL).
+
+**Resolution:** Pending. For UAT we can pin with `helm pull oci://... --version 0.1.2` and proceed; that is the customer-grade install path with explicit pinning, which is acceptable but suboptimal for documentation copy-paste flows. Permanent fix is upstream: either (a) Replicated deletes the OCI artifact when a release is demoted (preferred), or (b) document clearly that customer install docs must always pin a specific chart version. Treat any future test-version pollution as a forever-cost on the channel's unpinned customer experience.
+
+**Severity:** blocker
+
+## Entry 36 — 2026-05-01 — annoyance
+
+**Trying to:** Run `replicated release lint --yaml-dir release/` locally as a `make release-lint` target so a developer can shake out KOTS CR errors without provisioning anything.
+
+**Expected:** A clean lint pass on `main`, treating any error-severity finding as a real bug.
+
+**Actual:** Permanent error-severity failure on `release/embedded-cluster-config.yaml`: `non-existent-ec-version "Embedded Cluster version not found"` because `spec.version` was checked in as the empty string `""`. This had been the state since the file was first added (commit `e8db886`, GRO-mmab) and never fixed. The tier-5 UAT note in `.vault/knowledge/uat/uat-GRO-7uiw-tier5-config-screen.md` claimed "CI rewrites the EC version at release time -- acceptable", but inspection of `.github/workflows/release.yaml` showed no such rewrite step. CI was simply ignoring the lint error at `release create` time (Vendor Portal accepts an empty EC version as "use latest" or similar). The bogus UAT claim was repeated by an agent in the demo-script friction-notes section, and would have shipped to a Loom narration if a human hadn't questioned it.
+
+**Resolution:** Set `spec.version: 2.17.0+k8s-1.34` directly in `release/embedded-cluster-config.yaml` (the latest published EC release matching the K8s minor used by `pr.yaml` / `release.yaml` cluster create). Added a comment in the file documenting the coupling pattern: the EC version is part of the release artifact, checked in alongside the chart, the helmchart CR, and the application CR; bump it deliberately when the chart is tested against a newer EC release; CI does not rewrite this field. Bumped K8s 1.32 → 1.34 across pr.yaml, release.yaml, EC config, and Makefile in the same change. ~15 minutes including investigation.
+
+Two preventable patterns surfaced:
+1. The agent-vs-source-of-truth gap: when an agent finds a comment claiming "CI handles X", verify by reading the workflow before relying on it. The UAT note's claim was unsourced and untested.
+2. Release-artifact reproducibility: every field that goes into a release manifest should be either (a) derivable from the git tag, or (b) checked into the repo. Empty fields with implicit "CI fills it in later" semantics fail both criteria — and in this case the "CI fills it in later" was a lie.
+
+**Severity:** annoyance

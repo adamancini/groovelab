@@ -1,3 +1,4 @@
+---
 {{- /*
 CRD-check post-install/post-upgrade Helm hook.
 

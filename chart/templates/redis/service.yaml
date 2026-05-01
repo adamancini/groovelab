@@ -1,4 +1,5 @@
 {{- if .Values.valkey.enabled }}
+---
 apiVersion: v1
 kind: Service
 metadata:

@@ -26,28 +26,75 @@ DIST_DIR ?= dist
 CHART_VERSION := $(shell yq -r '.version' $(CHART_DIR)/Chart.yaml)
 CHART_TGZ := $(DIST_DIR)/$(APP_SLUG)-$(CHART_VERSION).tgz
 
-.PHONY: help chart-deps chart-package chart-lint release-unstable clean-dist \
+.PHONY: help chart-deps chart-package chart-lint release-lint lint clean-dist \
+        release-unstable \
         pr-slug pr-channel pr-customer pr-cluster pr-install pr-test pr-teardown \
-        _require-version _require-token _require-not-main
+        build build-frontend build-backend release \
+        customer cluster deploy smoke uat teardown \
+        _require-version _require-version-tag _require-customer _require-cluster \
+        _require-token _require-not-main
 
 help: ## Show available targets
 	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m [VAR=value ...]\n\nTargets:\n"} /^[a-zA-Z_-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 	@echo ""
 	@echo "Conventions:"
-	@echo "  - Pass env vars AFTER the command, e.g. make release-unstable VERSION=v0.1.1"
-	@echo "  - REPLICATED_API_TOKEN must be exported for release-unstable and pr-* targets"
+	@echo "  - Pass env vars AFTER the command: make deploy VERSION=0.1.2 CUSTOMER=foo CLUSTER=bar"
+	@echo "  - REPLICATED_API_TOKEN must be exported for any target that talks to Replicated."
+	@echo "  - Test/dev release tags MUST use a SemVer pre-release qualifier (v0.0.0-test.<sha>)."
+	@echo "    Plain numerals like v9.9.9 poison the OCI registry's latest-tag resolution forever."
 	@echo ""
-	@echo "Per-PR install (mirrors .github/workflows/pr.yaml; see scripts/replicated-slug.sh):"
+	@echo "Lint:"
+	@echo "  make lint                          # helm lint + replicated release lint"
+	@echo "  make chart-lint                    # helm lint only"
+	@echo "  make release-lint                  # replicated release lint only (packages chart first)"
+	@echo ""
+	@echo "Build & release:"
+	@echo "  make build VERSION=0.1.3           # build + push frontend and backend images"
+	@echo "  make release VERSION=v0.1.3        # tag + push (CI takes over from there)"
+	@echo "  make release-unstable VERSION=v0.1.3   # local Replicated release on Unstable"
+	@echo ""
+	@echo "Deploy & UAT (any cluster, any customer):"
+	@echo "  make customer NAME=uat-v0.1.3 CHANNEL=Unstable"
+	@echo "  make cluster NAME=uat-v0-1-3 TTL=2h"
+	@echo "  make deploy VERSION=0.1.2 CUSTOMER=uat-v0.1.3 CLUSTER=uat-v0-1-3"
+	@echo "  make uat VERSION=0.1.2 CHANNEL=Unstable        # composite of the three above + smoke"
+	@echo "  make smoke NAMESPACE=groovelab CLUSTER=uat-v0-1-3"
+	@echo "  make teardown CUSTOMER=uat-v0.1.3 CLUSTER=uat-v0-1-3"
+	@echo ""
+	@echo "Per-PR install (mirrors .github/workflows/pr.yaml):"
 	@echo "  make pr-slug                 # print normalized slug for current branch"
 	@echo "  make pr-test                 # full local replication of pr.yaml flow"
-	@echo "  make pr-test IMAGE_TAG=pr-123-abc1234  # pin chart appVersion to a specific GHCR tag"
-	@echo "  make pr-teardown             # delete cluster + archive customer + archive channel"
+	@echo "  make pr-teardown             # delete namespace + archive customer + channel"
 
 chart-deps: ## Update chart dependencies (runs `helm dependency update`)
 	helm dependency update $(CHART_DIR)
 
 chart-lint: ## Run `helm lint` on the chart
 	helm lint $(CHART_DIR)
+
+# release-lint runs `replicated release lint` against the release/ directory
+# AFTER packaging the chart into it. The chart tarball must be co-located with
+# the KOTS CRs because `--yaml-dir` is mutually exclusive with `--chart` (Entry
+# 13). This catches KOTS Application/HelmChart/EmbeddedCluster Config issues
+# before they hit `replicated release create`. CI runs the equivalent inline
+# during release-unstable; this target lets a local dev shake out the same
+# linter findings without provisioning anything.
+release-lint: _require-token chart-deps ## Run `replicated release lint` on packaged chart + KOTS CRs in release/
+	@set -euo pipefail; \
+	CHART_VER=$$(yq -r '.version' $(CHART_DIR)/Chart.yaml); \
+	CHART_TGZ="$(RELEASE_DIR)/$(APP_SLUG)-$${CHART_VER}.tgz"; \
+	echo "==> Packaging chart into $(RELEASE_DIR)/ for lint"; \
+	rm -f $(RELEASE_DIR)/$(APP_SLUG)-*.tgz; \
+	helm package $(CHART_DIR) --destination $(RELEASE_DIR) >/dev/null; \
+	trap 'rm -f $${CHART_TGZ}' EXIT; \
+	echo "==> replicated release lint --yaml-dir $(RELEASE_DIR)"; \
+	replicated release lint --yaml-dir $(RELEASE_DIR) --app $(APP_SLUG); \
+	echo ""; \
+	echo "OK: release lint clean."
+
+lint: chart-lint release-lint ## Run helm lint AND replicated release lint (both)
+	@echo ""
+	@echo "OK: all linters green."
 
 chart-package: chart-deps ## Package chart/ into dist/groovelab-<version>.tgz (reads version from Chart.yaml)
 	@mkdir -p $(DIST_DIR)
@@ -108,10 +155,11 @@ _require-version:
 	fi
 
 _require-token:
-	@if [ -z "$${REPLICATED_API_TOKEN:-}" ]; then \
-		echo "ERROR: REPLICATED_API_TOKEN is not set. Export it via your shell or .envrc."; \
-		exit 2; \
-	fi
+	@if [ -n "$${REPLICATED_API_TOKEN:-}" ]; then exit 0; fi; \
+	if replicated app ls --app $(APP_SLUG) >/dev/null 2>&1; then exit 0; fi; \
+	echo "ERROR: Replicated CLI is not authenticated."; \
+	echo "       Run 'replicated login' or export REPLICATED_API_TOKEN."; \
+	exit 2
 
 _require-not-main:
 	@CUR=$$(git rev-parse --abbrev-ref HEAD); \
@@ -217,7 +265,7 @@ pr-cluster: _require-token _require-not-main ## Lookup-or-create the shared CMX 
 	if [ -z "$$CLUSTER_ID" ]; then \
 	  echo "==> No running $$CLUSTER_NAME; provisioning new (TTL 24h)"; \
 	  CLUSTER_JSON=$$(replicated cluster create \
-	    --distribution k3s --version "1.32" \
+	    --distribution k3s --version "1.34" \
 	    --name "$$CLUSTER_NAME" --ttl 24h --wait 10m \
 	    --app "$(APP_SLUG)" --output json); \
 	  CLUSTER_ID=$$(echo "$$CLUSTER_JSON" \
@@ -384,3 +432,281 @@ pr-teardown: _require-token ## Tear down per-PR namespace, customer, and channel
 	fi; \
 	echo "  - Shared cluster groovelab-ci persists (TTL 24h); not removed."; \
 	echo "OK: teardown complete."
+
+# ---------------------------------------------------------------------------
+# General-purpose build / release / deploy / UAT targets.
+#
+# These exist so a contributor can clone the repo and run `make build`,
+# `make release`, `make deploy` with explicit parameters — no agent required.
+# Per-PR development uses the pr-* family above; these handle everything else
+# (release cuts, UAT against Unstable/Stable, ad-hoc cluster installs).
+#
+# Required parameters per target:
+#   build:    VERSION=<semver>                         # 0.1.3 or v0.1.3
+#   release:  VERSION=<vX.Y.Z>                         # must start with 'v'
+#   customer: NAME=<customer-name> CHANNEL=<channel>   # CHANNEL defaults Unstable
+#   cluster:  NAME=<cluster-name>                      # TTL defaults 2h
+#   deploy:   VERSION=<chart-version> CUSTOMER=<name>  # CLUSTER must already exist
+#             CLUSTER=<cluster-name>
+#   smoke:    CLUSTER=<cluster-name>                   # NAMESPACE defaults groovelab
+#   uat:      VERSION=<chart-version>                  # composite; creates customer + cluster
+#   teardown: CUSTOMER=<name> CLUSTER=<name>           # archives customer, deletes cluster
+# ---------------------------------------------------------------------------
+
+CHANNEL ?= Unstable
+NAMESPACE ?= $(APP_SLUG)
+TTL ?= 2h
+K8S_DISTRIBUTION ?= k3s
+K8S_VERSION ?= 1.34
+GHCR_OWNER ?= adamancini
+GHCR_BACKEND := ghcr.io/$(GHCR_OWNER)/$(APP_SLUG)-backend
+GHCR_FRONTEND := ghcr.io/$(GHCR_OWNER)/$(APP_SLUG)-frontend
+
+# Strip a leading 'v' from VERSION so chart-version (SemVer numerals) and
+# image-tag (v-prefixed) stay consistent. Both forms accepted on input.
+CHART_VER = $(VERSION:v%=%)
+APP_VER ?= v$(CHART_VER)
+
+# ---------- build ----------------------------------------------------------
+
+build: build-backend build-frontend ## Build and push both images for VERSION (multi-arch via buildx)
+
+build-backend: _require-version ## Build and push backend image for VERSION
+	@set -euo pipefail; \
+	echo "==> Building $(GHCR_BACKEND):$(APP_VER) (linux/amd64)"; \
+	docker buildx build \
+	  --platform linux/amd64 \
+	  --tag "$(GHCR_BACKEND):$(APP_VER)" \
+	  --push \
+	  ./backend
+	@echo "OK: $(GHCR_BACKEND):$(APP_VER) pushed."
+
+build-frontend: _require-version ## Build and push frontend image for VERSION
+	@set -euo pipefail; \
+	echo "==> Building $(GHCR_FRONTEND):$(APP_VER) (linux/amd64)"; \
+	docker buildx build \
+	  --platform linux/amd64 \
+	  --tag "$(GHCR_FRONTEND):$(APP_VER)" \
+	  --push \
+	  ./frontend
+	@echo "OK: $(GHCR_FRONTEND):$(APP_VER) pushed."
+
+# ---------- release --------------------------------------------------------
+
+release: _require-version-tag ## Tag main with VERSION and push (CI release.yaml takes over)
+	@set -euo pipefail; \
+	if ! git diff --quiet || ! git diff --cached --quiet; then \
+	  echo "ERROR: working tree is dirty. Commit or stash before releasing."; \
+	  exit 1; \
+	fi; \
+	CUR=$$(git rev-parse --abbrev-ref HEAD); \
+	if [ "$$CUR" != "main" ]; then \
+	  echo "ERROR: release must be cut from main; currently on $$CUR."; \
+	  exit 1; \
+	fi; \
+	if git rev-parse "$(VERSION)" >/dev/null 2>&1; then \
+	  echo "ERROR: tag $(VERSION) already exists."; exit 1; \
+	fi; \
+	echo "==> Annotating tag $(VERSION) and pushing to origin"; \
+	git tag -a "$(VERSION)" -m "Release $(VERSION)"; \
+	git push origin "$(VERSION)"; \
+	echo ""; \
+	echo "OK: tag $(VERSION) pushed. CI release.yaml is now running."; \
+	echo "Watch it: gh run watch \$$(gh run list --workflow=release.yaml --limit 1 --json databaseId -q '.[0].databaseId')"
+
+# ---------- customer / cluster primitives ----------------------------------
+
+customer: _require-token ## Create a dev customer NAME on CHANNEL (idempotent; no expiration)
+	@set -euo pipefail; \
+	if [ -z "$${NAME:-}" ]; then echo "ERROR: NAME=<customer-name> is required."; exit 2; fi; \
+	echo "==> Customer $$NAME on channel $(CHANNEL)"; \
+	EXISTING=$$(replicated customer ls --app "$(APP_SLUG)" --output json \
+	  | jq -r --arg n "$$NAME" '.[] | select(.archivedAt == null) | select(.name == $$n) | .installationId // empty'); \
+	if [ -n "$$EXISTING" ]; then \
+	  echo "OK: reusing customer $$NAME (license_id: $$EXISTING)"; \
+	else \
+	  CUSTOMER_JSON=$$(replicated customer create \
+	    --name "$$NAME" --email "$$NAME@groovelab.test" \
+	    --channel "$(CHANNEL)" --type dev \
+	    --app "$(APP_SLUG)" --output json); \
+	  LICENSE_ID=$$(echo "$$CUSTOMER_JSON" | jq -r '.installationId // .customer.installationId // empty'); \
+	  echo "OK: customer $$NAME created (license_id: $$LICENSE_ID, no expiration)"; \
+	fi
+
+cluster: _require-token ## Provision a CMX cluster NAME (TTL 2h, k3s 1.34, idempotent)
+	@set -euo pipefail; \
+	if [ -z "$${NAME:-}" ]; then echo "ERROR: NAME=<cluster-name> is required."; exit 2; fi; \
+	echo "==> Cluster $$NAME ($(K8S_DISTRIBUTION) $(K8S_VERSION), TTL $(TTL))"; \
+	EXISTING=$$(replicated cluster ls --output json \
+	  | jq -r --arg n "$$NAME" '[.[] | select(.name == $$n and .status == "running")][0].id // empty'); \
+	if [ -n "$$EXISTING" ]; then \
+	  echo "OK: reusing cluster $$NAME (id: $$EXISTING)"; \
+	  CLUSTER_ID="$$EXISTING"; \
+	else \
+	  CLUSTER_JSON=$$(replicated cluster create \
+	    --distribution $(K8S_DISTRIBUTION) --version $(K8S_VERSION) \
+	    --name "$$NAME" --ttl $(TTL) --wait 10m \
+	    --app "$(APP_SLUG)" --output json); \
+	  CLUSTER_ID=$$(echo "$$CLUSTER_JSON" | jq -r '.id // .cluster.id // empty'); \
+	  echo "OK: cluster $$NAME provisioned (id: $$CLUSTER_ID)"; \
+	fi; \
+	mkdir -p $(DIST_DIR); \
+	replicated cluster kubeconfig "$$CLUSTER_ID" --app "$(APP_SLUG)" \
+	  --output-path "$(DIST_DIR)/$$NAME-kubeconfig.yaml"; \
+	echo "OK: kubeconfig written to $(DIST_DIR)/$$NAME-kubeconfig.yaml"; \
+	echo ""; \
+	echo "Use:  export KUBECONFIG=$$PWD/$(DIST_DIR)/$$NAME-kubeconfig.yaml"
+
+# ---------- deploy ---------------------------------------------------------
+
+deploy: _require-token _require-version _require-customer _require-cluster ## Customer-grade install of VERSION on CLUSTER as CUSTOMER
+	@set -euo pipefail; \
+	KUBECONFIG_PATH="$(DIST_DIR)/$(CLUSTER)-kubeconfig.yaml"; \
+	if [ ! -f "$$KUBECONFIG_PATH" ]; then \
+	  echo "ERROR: $$KUBECONFIG_PATH not found. Run 'make cluster NAME=$(CLUSTER)' first."; \
+	  exit 1; \
+	fi; \
+	export KUBECONFIG="$$PWD/$$KUBECONFIG_PATH"; \
+	echo "==> Resolving licenseId for customer $(CUSTOMER)"; \
+	LICENSE_ID=$$(replicated customer ls --app "$(APP_SLUG)" --output json \
+	  | jq -r --arg n "$(CUSTOMER)" '.[] | select(.archivedAt == null) | select(.name == $$n) | .installationId // empty'); \
+	if [ -z "$$LICENSE_ID" ] || [ "$$LICENSE_ID" = "null" ]; then \
+	  echo "ERROR: customer $(CUSTOMER) not found. Run 'make customer NAME=$(CUSTOMER)' first."; \
+	  exit 1; \
+	fi; \
+	echo "==> Pre-installing CNPG + cert-manager (idempotent)"; \
+	helm repo add cnpg https://cloudnative-pg.github.io/charts >/dev/null 2>&1 || true; \
+	helm repo add jetstack https://charts.jetstack.io >/dev/null 2>&1 || true; \
+	helm repo update >/dev/null; \
+	helm upgrade --install cnpg-operator cnpg/cloudnative-pg \
+	  --namespace cnpg-system --create-namespace --wait --timeout 3m; \
+	helm upgrade --install cert-manager jetstack/cert-manager \
+	  --namespace cert-manager --create-namespace \
+	  --set crds.enabled=true --wait --timeout 3m; \
+	echo "==> helm registry login registry.replicated.com"; \
+	echo "$$LICENSE_ID" | helm registry login registry.replicated.com \
+	  --username "$$LICENSE_ID" --password-stdin; \
+	OCI_URL="oci://registry.replicated.com/$(APP_SLUG)/$(call lower,$(CHANNEL))/$(APP_SLUG)"; \
+	echo "==> Installing $(APP_SLUG) $(CHART_VER) into ns $(NAMESPACE)"; \
+	echo "    OCI: $$OCI_URL"; \
+	helm upgrade --install $(APP_SLUG) "$$OCI_URL" \
+	  --version "$(CHART_VER)" \
+	  --namespace "$(NAMESPACE)" --create-namespace \
+	  --set cloudnative-pg.enabled=false \
+	  --set cert-manager.enabled=false \
+	  --wait --timeout 5m; \
+	echo "OK: deploy complete."; \
+	echo ""; \
+	echo "Pods:"; \
+	kubectl get pods -n "$(NAMESPACE)"
+
+# Lower-case helper for OCI URL channel slug (Replicated uses lowercase channel slugs).
+lower = $(shell echo "$(1)" | tr '[:upper:]' '[:lower:]')
+
+# ---------- smoke ----------------------------------------------------------
+
+smoke: _require-cluster ## Run smoke checks against an installed NAMESPACE on CLUSTER
+	@set -euo pipefail; \
+	KUBECONFIG_PATH="$(DIST_DIR)/$(CLUSTER)-kubeconfig.yaml"; \
+	if [ ! -f "$$KUBECONFIG_PATH" ]; then \
+	  echo "ERROR: $$KUBECONFIG_PATH not found."; \
+	  exit 1; \
+	fi; \
+	export KUBECONFIG="$$PWD/$$KUBECONFIG_PATH"; \
+	echo "==> Port-forwarding $(APP_SLUG)-backend in $(NAMESPACE)"; \
+	kubectl port-forward -n "$(NAMESPACE)" svc/$(APP_SLUG)-backend 18080:8080 >/dev/null 2>&1 & \
+	PF_PID=$$!; \
+	sleep 5; \
+	trap 'kill $$PF_PID 2>/dev/null || true' EXIT; \
+	echo "==> /healthz"; \
+	HEALTH_HTTP=$$(curl -s -o /tmp/healthz.json -w "%{http_code}" http://localhost:18080/healthz); \
+	if [ "$$HEALTH_HTTP" != "200" ]; then \
+	  echo "FAIL: /healthz returned HTTP $$HEALTH_HTTP"; \
+	  cat /tmp/healthz.json; exit 1; \
+	fi; \
+	jq '{version, status, db: .checks.database.status, redis: .checks.redis.status, license: .checks.license.status}' /tmp/healthz.json; \
+	echo "==> /api/replicated/updates (cold cache should be 200 pending)"; \
+	UPDATES_HTTP=$$(curl -s -o /tmp/updates.json -w "%{http_code}" http://localhost:18080/api/replicated/updates); \
+	if [ "$$UPDATES_HTTP" != "200" ]; then \
+	  echo "FAIL: /api/replicated/updates returned HTTP $$UPDATES_HTTP (want 200)"; \
+	  cat /tmp/updates.json; exit 1; \
+	fi; \
+	jq . /tmp/updates.json; \
+	echo "==> /api/v1/flashcards/answer with no body (404 contract)"; \
+	ANS_HTTP=$$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'Content-Type: application/json' \
+	  -d '{}' http://localhost:18080/api/v1/flashcards/answer); \
+	if [ "$$ANS_HTTP" != "404" ]; then \
+	  echo "FAIL: /flashcards/answer returned HTTP $$ANS_HTTP (want 404)"; exit 1; \
+	fi; \
+	echo "OK: smoke checks green ($(APP_SLUG) on $(CLUSTER)/$(NAMESPACE))"
+
+# ---------- uat (composite) ------------------------------------------------
+
+uat: _require-token _require-version ## Composite: ensure customer + cluster, deploy VERSION, run smoke. Auto-derives names.
+	@set -euo pipefail; \
+	UAT_NAME="uat-v$(CHART_VER)"; \
+	UAT_CLUSTER=$$(echo "uat-v$(CHART_VER)" | tr '.' '-'); \
+	echo "==> UAT for v$(CHART_VER) (customer=$$UAT_NAME cluster=$$UAT_CLUSTER channel=$(CHANNEL))"; \
+	$(MAKE) customer NAME="$$UAT_NAME" CHANNEL=$(CHANNEL); \
+	$(MAKE) cluster NAME="$$UAT_CLUSTER"; \
+	$(MAKE) deploy VERSION=$(CHART_VER) CUSTOMER="$$UAT_NAME" CLUSTER="$$UAT_CLUSTER" CHANNEL=$(CHANNEL); \
+	$(MAKE) smoke CLUSTER="$$UAT_CLUSTER" NAMESPACE=$(NAMESPACE); \
+	echo ""; \
+	echo "PASS: UAT green for v$(CHART_VER)."; \
+	echo "Teardown:  make teardown CUSTOMER=$$UAT_NAME CLUSTER=$$UAT_CLUSTER"
+
+# ---------- teardown -------------------------------------------------------
+
+teardown: _require-token ## Archive customer, delete cluster (preserves test artifacts elsewhere)
+	@set -euo pipefail; \
+	if [ -z "$${CUSTOMER:-}" ] && [ -z "$${CLUSTER:-}" ]; then \
+	  echo "ERROR: at least one of CUSTOMER=<name> or CLUSTER=<name> required."; exit 2; \
+	fi; \
+	if [ -n "$${CUSTOMER:-}" ]; then \
+	  CUST_ID=$$(replicated customer ls --app "$(APP_SLUG)" --output json \
+	    | jq -r --arg n "$(CUSTOMER)" '.[] | select(.name == $$n) | .id // empty'); \
+	  if [ -n "$$CUST_ID" ]; then \
+	    echo "==> Archiving customer $(CUSTOMER) ($$CUST_ID)"; \
+	    replicated customer archive "$$CUST_ID" --app "$(APP_SLUG)" || true; \
+	  else \
+	    echo "==> Customer $(CUSTOMER) already gone"; \
+	  fi; \
+	fi; \
+	if [ -n "$${CLUSTER:-}" ]; then \
+	  CLUSTER_ID=$$(replicated cluster ls --output json \
+	    | jq -r --arg n "$(CLUSTER)" '[.[] | select(.name == $$n)][0].id // empty'); \
+	  if [ -n "$$CLUSTER_ID" ]; then \
+	    echo "==> Deleting cluster $(CLUSTER) ($$CLUSTER_ID)"; \
+	    replicated cluster rm "$$CLUSTER_ID" --app "$(APP_SLUG)" || true; \
+	  else \
+	    echo "==> Cluster $(CLUSTER) already gone"; \
+	  fi; \
+	  rm -f $(DIST_DIR)/$(CLUSTER)-kubeconfig.yaml; \
+	fi; \
+	echo "OK: teardown complete."
+
+# ---------- guards ---------------------------------------------------------
+
+_require-version-tag:
+	@if [ -z "$${VERSION:-}" ]; then \
+	  echo "ERROR: VERSION=vX.Y.Z is required."; exit 2; \
+	fi; \
+	if ! echo "$(VERSION)" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$$'; then \
+	  echo "ERROR: VERSION must be a SemVer tag starting with 'v' (e.g. v0.1.3, v0.0.0-test.1)."; \
+	  echo "       Got: $(VERSION)"; exit 2; \
+	fi; \
+	if echo "$(VERSION)" | grep -qE '^v9+\.9+\.9+$$|^v99+\.99+\.99+$$'; then \
+	  echo "ERROR: $(VERSION) is reserved-style nines. Use a pre-release qualifier (v0.0.0-test.<sha>)."; \
+	  echo "       Plain SemVer-max numerals poison OCI 'latest' resolution forever (FRICTION_LOG.md Entry 34)."; \
+	  exit 2; \
+	fi
+
+_require-customer:
+	@if [ -z "$${CUSTOMER:-}" ]; then \
+	  echo "ERROR: CUSTOMER=<customer-name> is required."; exit 2; \
+	fi
+
+_require-cluster:
+	@if [ -z "$${CLUSTER:-}" ]; then \
+	  echo "ERROR: CLUSTER=<cluster-name> is required."; exit 2; \
+	fi

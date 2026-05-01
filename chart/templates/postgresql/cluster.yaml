@@ -1,4 +1,5 @@
 {{- if .Values.cnpg.createCluster }}
+---
 apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
