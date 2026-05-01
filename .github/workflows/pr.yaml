@@ -488,6 +488,32 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      # GRO-uqtg: single point-of-truth for chart-dep resolution in this job.
+      # Previously each downstream step that needed extracted subcharts called
+      # `helm dependency update chart/` itself, which re-ran registry lookups
+      # and re-downloaded tarballs ~10-20s per invocation. Consolidating here
+      # means downstream steps (Package chart, Pre-install cluster-shared
+      # infra, Install groovelab) can rely on `chart/charts/*.tgz` AND
+      # `chart/charts/<dep>/` already existing.
+      - name: Resolve chart dependencies
+        run: |
+          helm dependency update chart/
+          # Helm v4 requires extracted subchart directories for downstream
+          # lint/install/template operations. Extract tarballs once here so
+          # downstream steps can rely on both the tarball and the directory
+          # being present.
+          cd chart/charts
+          for f in *.tgz; do
+            [ -f "$f" ] || continue
+            DIR="${f%.tgz}"
+            if [ ! -d "$DIR" ]; then
+              tar xzf "$f"
+            fi
+          done
+          cd ../..
+          echo "Chart dependencies resolved:"
+          ls -la chart/charts/
+
       - name: Install Replicated CLI
         run: |
           curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
@@ -540,7 +566,9 @@ jobs:
           SLUG: ${{ steps.slug.outputs.slug }}
           CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
         run: |
-          helm dependency update chart/
+          # GRO-uqtg: chart deps are resolved once in the upstream "Resolve
+          # chart dependencies" step. No need to re-run `helm dependency
+          # update` here.
           mkdir -p release/
           # --app-version MUST match the GHCR image tag the build job pushed
           # (env IMAGE_TAG, format `pr-<PR_NUMBER>-<SHORT_SHA>`), because the
@@ -800,13 +828,9 @@ jobs:
             echo "[$(date +%H:%M:%S)] Reusing shared cluster — CNPG + cert-manager already installed; skipping."
             exit 0
           fi
-          helm dependency update chart/
-          # Extract subcharts so we can install them directly.
-          # `helm dependency update` populates chart/charts/<dep>-*.tgz;
-          # extract idempotently (skip if already extracted from a prior step).
-          (cd chart/charts && for f in cloudnative-pg-*.tgz cert-manager-*.tgz; do
-             [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true
-           done)
+          # GRO-uqtg: chart deps + tarball extraction are handled once in the
+          # upstream "Resolve chart dependencies" step. `chart/charts/<dep>/`
+          # is already present here for both cloudnative-pg and cert-manager.
           echo "[$(date +%H:%M:%S)] Installing CNPG operator into cnpg-system..."
           helm install cnpg-operator chart/charts/cloudnative-pg \
             --namespace cnpg-system --create-namespace \

@@ -166,6 +166,32 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      # GRO-uqtg: single point-of-truth for chart-dep resolution in this job.
+      # Previously each step that needed extracted subcharts called
+      # `helm dependency update chart/` itself, which re-ran registry lookups
+      # and re-downloaded tarballs ~10-20s per invocation. Consolidating here
+      # means downstream steps (Package chart, Install CNPG operator,
+      # Install/Upgrade test) can rely on `chart/charts/*.tgz` AND
+      # `chart/charts/<dep>/` already existing.
+      - name: Resolve chart dependencies
+        run: |
+          helm dependency update chart/
+          # Helm v4 requires extracted subchart directories for downstream
+          # install/template operations. Extract tarballs once here so
+          # downstream steps can rely on both the tarball and the directory
+          # being present.
+          cd chart/charts
+          for f in *.tgz; do
+            [ -f "$f" ] || continue
+            DIR="${f%.tgz}"
+            if [ ! -d "$DIR" ]; then
+              tar xzf "$f"
+            fi
+          done
+          cd ../..
+          echo "Chart dependencies resolved:"
+          ls -la chart/charts/
+
       - name: Install Replicated CLI
         run: |
           curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
@@ -218,8 +244,10 @@ jobs:
         env:
           VERSION: ${{ env.VERSION }}
         run: |
+          # GRO-uqtg: chart deps are resolved once in the upstream "Resolve
+          # chart dependencies" step. No need to re-run `helm dependency
+          # update` here.
           CHART_VERSION="${VERSION#v}"
-          helm dependency update chart/
           helm package chart/ \
             --destination release/ \
             --version "${CHART_VERSION}" \
@@ -300,8 +328,9 @@ jobs:
 
       - name: Install CNPG operator
         run: |
-          helm dependency update chart/
-          cd chart/charts && for f in cloudnative-pg*.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
+          # GRO-uqtg: chart deps + tarball extraction happen once in the
+          # upstream "Resolve chart dependencies" step. `chart/charts/cloudnative-pg/`
+          # is already present here.
           helm install cnpg-operator chart/charts/cloudnative-pg \
             --namespace cnpg-system --create-namespace \
             --wait --timeout 3m
@@ -392,7 +421,8 @@ jobs:
       - name: Install test (fresh install)
         run: |
           NAMESPACE=groovelab
-          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true; done && cd ../..
+          # GRO-uqtg: chart deps + tarball extraction handled once in the
+          # upstream "Resolve chart dependencies" step.
 
           # NOTE: image tags intentionally NOT overridden. The chart must
           # resolve them from `.Chart.AppVersion` (which the Sync Chart.yaml
