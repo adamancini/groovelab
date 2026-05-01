@@ -9,6 +9,7 @@ import { render, screen, fireEvent, within, waitFor } from "@testing-library/rea
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { AuthProvider } from "../context/AuthContext";
+import { InstrumentProvider } from "../context/InstrumentContext";
 import { ThemeProvider } from "../context/ThemeContext";
 import FretboardRef from "../pages/FretboardRef";
 import { DEFAULT_TUNING_PRESETS } from "../lib/music-theory";
@@ -22,11 +23,13 @@ function renderFretboardRef() {
   return render(
     <ThemeProvider>
       <AuthProvider>
-        <MemoryRouter initialEntries={["/fretboard"]}>
-          <Routes>
-            <Route path="/fretboard" element={<FretboardRef />} />
-          </Routes>
-        </MemoryRouter>
+        <InstrumentProvider>
+          <MemoryRouter initialEntries={["/fretboard"]}>
+            <Routes>
+              <Route path="/fretboard" element={<FretboardRef />} />
+            </Routes>
+          </MemoryRouter>
+        </InstrumentProvider>
       </AuthProvider>
     </ThemeProvider>,
   );
