@@ -26,8 +26,9 @@ jobs:
   # ── Detect Changes ────────────────────────────────────────────────────────
   # Path-filter gate (GRO-jg8v): heavyweight Build+Sign and CMX Test jobs are
   # skipped on docs-only PRs (markdown, FRICTION_LOG, vault knowledge, etc.).
-  # Lint and Test still runs unconditionally — it's cheap (<2m on cache hit)
-  # and catches markdown / helm-lint / link regressions on docs PRs.
+  # GRO-6gq2: lint-test was split into go-test/node-test/helm-lint and is
+  # also gated on `code == 'true'` so docs-only PRs skip all of them too —
+  # they report `skipped` (== success for branch protection).
   #
   # NOTE: filter is intentionally job-level (dorny/paths-filter) NOT
   # workflow-level `paths:` / `paths-ignore:`. Workflow-level filtering would
@@ -105,10 +106,23 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-  # ── Lint and Test ─────────────────────────────────────────────────────────
-  lint-test:
-    name: Lint and Test
+  # ── Lint and Test (parallel split) ────────────────────────────────────────
+  # GRO-6gq2: previously a single `lint-test` job ran helm-lint + go-test +
+  # npm-{ci,lint,test} serially on one runner (~3-4 min wall-clock). Split
+  # into three jobs running on separate runners so wall-clock collapses to
+  # max(go-test, node-test, helm-lint) ≈ 1.5-2 min. Each job:
+  #   - gates on `needs.detect-changes.outputs.code == 'true'` (GRO-jg8v) so
+  #     docs-only PRs skip all three (skipped == success for branch protection).
+  #   - retains its respective build-cache (GRO-i987): setup-go cache: true,
+  #     setup-node cache: 'npm', actions/cache@v4 for chart/charts/.
+  #   - emits the GRO-qrdt per-job timing summary independently.
+  # Downstream `build-sign` and `cmx-test` `needs:` are updated to gate on
+  # all three new jobs (was: `lint-test`).
+  go-test:
+    name: Go test
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
     steps:
       - name: Record job start
         id: job_start
@@ -124,41 +138,65 @@ jobs:
           cache: true
           cache-dependency-path: backend/go.sum
 
+      - name: Go test
+        working-directory: backend
+        # -p 4: package-level parallelism (GRO-i987). -shuffle on: surfaces
+        # inter-test ordering bugs without materially slowing the suite.
+        run: go test -p 4 -shuffle=on ./...
+
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  node-test:
+    name: Node test
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
+    steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version-file: frontend/package.json
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: ${{ env.HELM_VERSION }}
-
-      # Cache Helm subchart tarballs keyed on Chart.lock hash (GRO-i987).
-      # helm dependency update below is a no-op on cache hit (tarballs already
-      # present + matching Chart.lock), so cache-hit skips subchart re-fetch.
-      - name: Cache helm chart deps
-        uses: actions/cache@v4
-        with:
-          path: chart/charts
-          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
-          restore-keys: |
-            helm-deps-${{ runner.os }}-
-
-      - name: Helm lint
-        run: |
-          helm dependency update chart/
-          # Helm v4 requires extracted subchart directories for linting
-          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
-          helm lint chart/
-
-      - name: Go test
-        working-directory: backend
-        # -p 4: package-level parallelism (GRO-i987). -shuffle on: surfaces
-        # inter-test ordering bugs without materially slowing the suite.
-        run: go test -p 4 -shuffle=on ./...
 
       - name: npm install
         working-directory: frontend
@@ -206,6 +244,76 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
+  helm-lint:
+    name: Helm lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
+    steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # Cache Helm subchart tarballs keyed on Chart.lock hash (GRO-i987).
+      # helm dependency update below is a no-op on cache hit (tarballs already
+      # present + matching Chart.lock), so cache-hit skips subchart re-fetch.
+      - name: Cache helm chart deps
+        uses: actions/cache@v4
+        with:
+          path: chart/charts
+          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
+          restore-keys: |
+            helm-deps-${{ runner.os }}-
+
+      - name: Helm lint
+        run: |
+          helm dependency update chart/
+          # Helm v4 requires extracted subchart directories for linting
+          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
+          helm lint chart/
+
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
   # ── Build, Push, and Sign Images (matrix: frontend || backend) ───────────
   # GRO-fuxa: previously a single job that built+pushed+signed both images
   # serially (~3.5m wall-clock). Split into a 2-leg matrix so the two images
@@ -215,7 +323,8 @@ jobs:
   build-sign:
     name: Build, Push, and Sign (${{ matrix.service }})
     runs-on: ubuntu-latest
-    needs: [detect-changes, lint-test]
+    # GRO-6gq2: gate on all three parallel test jobs (was: lint-test).
+    needs: [detect-changes, go-test, node-test, helm-lint]
     if: needs.detect-changes.outputs.code == 'true'
     permissions:
       contents: read
@@ -1096,7 +1205,10 @@ jobs:
     # timing via REST so it captures both matrix legs as separate rows.
     # build-sign-collect is included so the aggregator runs after the
     # collector resolves (and to prevent it racing past matrix completion).
-    needs: [detect-changes, lint-test, build-sign, build-sign-collect, cmx-test]
+    # GRO-6gq2: lint-test split into go-test/node-test/helm-lint; aggregator
+    # consumes per-job timing via REST so each parallel job appears as its
+    # own row in the sticky comment.
+    needs: [detect-changes, go-test, node-test, helm-lint, build-sign, build-sign-collect, cmx-test]
     if: always() && github.event_name == 'pull_request'
     permissions:
       pull-requests: write
