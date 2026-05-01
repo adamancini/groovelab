@@ -7,6 +7,7 @@
 
 import { useState } from "react";
 import Fretboard from "../Fretboard";
+import { useInstrument } from "../../context/InstrumentContext";
 import type { FretboardPosition } from "../../lib/api";
 
 export interface FretboardTapProps {
@@ -20,11 +21,20 @@ export default function FretboardTap({
   onSubmit,
   disabled = false,
 }: FretboardTapProps) {
+  // GRO-05pv: read stringCount from InstrumentContext so the tap input mirrors
+  // the user's instrument (4/5/6 strings) instead of the legacy hardcoded 4.
+  // The hook throws "useInstrument must be used within an InstrumentProvider"
+  // when rendered outside the provider, which is the desired failure mode.
+  const { stringCount } = useInstrument();
   const [selected, setSelected] = useState<FretboardPosition[]>([]);
   const [submitted, setSubmitted] = useState(false);
 
   const handleTap = (position: FretboardPosition) => {
     if (disabled || submitted) return;
+    // AC #5: do not produce tap targets for rows beyond stringCount. The
+    // <Fretboard> already only emits cells for rows < stringCount, so this
+    // guard is defensive against future refactors / programmatic taps.
+    if (position.string >= stringCount) return;
 
     setSelected((prev) => {
       // Toggle: remove if already selected, add otherwise.
@@ -52,7 +62,7 @@ export default function FretboardTap({
   return (
     <div data-testid="fretboard-tap" className="space-y-4">
       <Fretboard
-        strings={4}
+        strings={stringCount}
         frets={12}
         selectedPositions={selected}
         onTap={handleTap}

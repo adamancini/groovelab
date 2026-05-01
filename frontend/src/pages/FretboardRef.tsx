@@ -15,6 +15,7 @@ import { useCallback, useMemo, useState } from "react";
 import TuningConfigurator from "../components/fretboard/TuningConfigurator";
 import NoteInfoPanel from "../components/fretboard/NoteInfoPanel";
 import ScaleChordFilter from "../components/fretboard/ScaleChordFilter";
+import { useInstrument } from "../context/InstrumentContext";
 import type { FretboardPosition } from "../lib/api";
 import {
   buildFretboardNotes,
@@ -24,15 +25,14 @@ import {
 } from "../lib/music-theory";
 
 const DEFAULT_FRETS = 12;
-const DEFAULT_STRING_COUNT = 4;
-const DEFAULT_TUNING = ["G", "D", "A", "E"]; // Standard 4-string bass
 
 /** Visual styles for fretboard note dots. */
 type NoteStyle = "tonic" | "highlighted" | "dimmed" | "tapped";
 
 export default function FretboardRef() {
-  const [stringCount, setStringCount] = useState(DEFAULT_STRING_COUNT);
-  const [tuning, setTuning] = useState<string[]>(DEFAULT_TUNING);
+  // Tuning + stringCount are now sourced from InstrumentContext (GRO-h5yo)
+  // so every fretboard rendering across the app reflects the same instrument.
+  const { tuning, stringCount, setTuning, setStringCount } = useInstrument();
   const [tappedNote, setTappedNote] = useState<string | null>(null);
   const [selectedDef, setSelectedDef] = useState<ScaleChordDef | null>(null);
   const [selectedKey, setSelectedKey] = useState<string>("C");
@@ -80,16 +80,22 @@ export default function FretboardRef() {
   );
 
   // Handle tuning change.
-  const handleTuningChange = useCallback((newTuning: string[]) => {
-    setTuning(newTuning);
-    setTappedNote(null); // Clear tapped note when tuning changes.
-  }, []);
+  const handleTuningChange = useCallback(
+    (newTuning: string[]) => {
+      setTuning(newTuning);
+      setTappedNote(null); // Clear tapped note when tuning changes.
+    },
+    [setTuning],
+  );
 
   // Handle string count change.
-  const handleStringCountChange = useCallback((count: number) => {
-    setStringCount(count);
-    setTappedNote(null);
-  }, []);
+  const handleStringCountChange = useCallback(
+    (count: number) => {
+      setStringCount(count);
+      setTappedNote(null);
+    },
+    [setStringCount],
+  );
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">

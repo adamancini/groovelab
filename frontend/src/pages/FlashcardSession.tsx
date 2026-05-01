@@ -16,6 +16,7 @@ import MultipleChoice from "../components/flashcards/MultipleChoice";
 import TypedAnswer from "../components/flashcards/TypedAnswer";
 import FretboardTap from "../components/flashcards/FretboardTap";
 import AnswerFeedback from "../components/flashcards/AnswerFeedback";
+import ChordDiagram from "../components/flashcards/ChordDiagram";
 import type { FretboardPosition } from "../lib/api";
 import { useChordPlayer } from "../hooks/useChordPlayer";
 
@@ -401,6 +402,20 @@ export default function FlashcardSession() {
             {currentCard.question}
           </h2>
 
+          {/* Chord-shape hint — shown on every stage (0..3) for chord cards
+              (GRO-nhmm). The diagram augments the question; it never replaces
+              the input UI below. Suppressed when the card is a non-chord card
+              (chordRoot or chordDefName null), e.g. type_to_intervals. */}
+          {currentCard.chordRoot && currentCard.chordDefName && (
+            <div className="mb-6" data-testid="question-chord-diagram">
+              <ChordDiagram
+                chordRoot={currentCard.chordRoot}
+                chordDefName={currentCard.chordDefName}
+                maxVoicings={3}
+              />
+            </div>
+          )}
+
           {/* Replay chord audio (hidden when no audio applies — e.g. type_to_intervals) */}
           {state.phase === "answering" && currentCard.chordNotes && (
             <div className="mb-4 text-center">
@@ -461,6 +476,8 @@ export default function FlashcardSession() {
               correctAnswer={state.result.correct_answer}
               explanation={state.result.explanation}
               correctPositions={state.result.correct_positions}
+              chordRoot={currentCard.chordRoot}
+              chordDefName={currentCard.chordDefName}
               onContinue={handleContinue}
             />
           )}
