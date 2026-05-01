@@ -70,8 +70,13 @@ jobs:
           tags: |
             ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.version }}
             ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:latest
-          cache-from: type=gha,scope=${{ matrix.service }}-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ github.workflow }}
+          # GRO-n9bk: registry-backed buildx cache (mirrors pr.yaml). Branch-
+          # independent and not subject to GHA's 10GB-per-repo cache eviction.
+          # Per-image ref keeps frontend/backend caches independent.
+          cache-from: |
+            type=registry,ref=${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:buildcache
+          cache-to: |
+            type=registry,ref=${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
@@ -161,13 +166,52 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Install Replicated CLI
+      # GRO-sm7y: cache resolved subchart tarballs keyed on Chart.lock hash.
+      # Mirrors pr.yaml helm-lint and cmx-test caches. `Package chart into
+      # release/` and `Install CNPG operator` both run `helm dependency
+      # update chart/`; on cache hit the subchart tarballs are already on
+      # disk so the dep-update is a no-op (~10-30s saved per run when
+      # Chart.lock is unchanged).
+      - name: Cache helm chart deps
+        uses: actions/cache@v4
+        with:
+          path: chart/charts
+          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
+          restore-keys: |
+            helm-deps-${{ runner.os }}-
+
+      # GRO-uqtg: single point-of-truth for chart-dep resolution in this job.
+      # Previously each step that needed extracted subcharts called
+      # `helm dependency update chart/` itself, which re-ran registry lookups
+      # and re-downloaded tarballs ~10-20s per invocation. Consolidating here
+      # means downstream steps (Package chart, Install CNPG operator,
+      # Install/Upgrade test) can rely on `chart/charts/*.tgz` AND
+      # `chart/charts/<dep>/` already existing.
+      - name: Resolve chart dependencies
         run: |
-          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
-            | grep "browser_download_url.*linux_amd64.tar.gz" \
-            | cut -d '"' -f 4 \
-            | xargs curl -sL \
-            | tar xz -C /usr/local/bin replicated
+          helm dependency update chart/
+          # Helm v4 requires extracted subchart directories for downstream
+          # install/template operations. Extract tarballs once here so
+          # downstream steps can rely on both the tarball and the directory
+          # being present.
+          cd chart/charts
+          for f in *.tgz; do
+            [ -f "$f" ] || continue
+            DIR="${f%.tgz}"
+            if [ ! -d "$DIR" ]; then
+              tar xzf "$f"
+            fi
+          done
+          cd ../..
+          echo "Chart dependencies resolved:"
+          ls -la chart/charts/
+
+      # GRO-mf1d: pinned, deduplicated install via local composite action
+      # (.github/actions/setup-replicated-cli). The previous inline pattern
+      # called api.github.com/.../releases/latest, which was rate-limited and
+      # silently chased the newest CLI release.
+      - name: Install Replicated CLI
+        uses: ./.github/actions/setup-replicated-cli
 
       - name: Sync Chart.yaml version to tag
         # Rewrites chart/Chart.yaml so `version` matches the tag without its
@@ -213,8 +257,10 @@ jobs:
         env:
           VERSION: ${{ env.VERSION }}
         run: |
+          # GRO-uqtg: chart deps are resolved once in the upstream "Resolve
+          # chart dependencies" step. No need to re-run `helm dependency
+          # update` here.
           CHART_VERSION="${VERSION#v}"
-          helm dependency update chart/
           helm package chart/ \
             --destination release/ \
             --version "${CHART_VERSION}" \
@@ -295,8 +341,9 @@ jobs:
 
       - name: Install CNPG operator
         run: |
-          helm dependency update chart/
-          cd chart/charts && for f in cloudnative-pg*.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
+          # GRO-uqtg: chart deps + tarball extraction happen once in the
+          # upstream "Resolve chart dependencies" step. `chart/charts/cloudnative-pg/`
+          # is already present here.
           helm install cnpg-operator chart/charts/cloudnative-pg \
             --namespace cnpg-system --create-namespace \
             --wait --timeout 3m
@@ -387,7 +434,8 @@ jobs:
       - name: Install test (fresh install)
         run: |
           NAMESPACE=groovelab
-          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true; done && cd ../..
+          # GRO-uqtg: chart deps + tarball extraction handled once in the
+          # upstream "Resolve chart dependencies" step.
 
           # NOTE: image tags intentionally NOT overridden. The chart must
           # resolve them from `.Chart.AppVersion` (which the Sync Chart.yaml
@@ -577,13 +625,12 @@ jobs:
         id: job_start
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      # GRO-mf1d: pinned, deduplicated install via local composite action
+      # (.github/actions/setup-replicated-cli). The previous inline pattern
+      # called api.github.com/.../releases/latest, which was rate-limited and
+      # silently chased the newest CLI release.
       - name: Install Replicated CLI
-        run: |
-          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
-            | grep "browser_download_url.*linux_amd64.tar.gz" \
-            | cut -d '"' -f 4 \
-            | xargs curl -sL \
-            | tar xz -C /usr/local/bin replicated
+        uses: ./.github/actions/setup-replicated-cli
 
       - name: Promote release to Stable
         run: |

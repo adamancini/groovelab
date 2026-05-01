@@ -26,8 +26,9 @@ jobs:
   # ── Detect Changes ────────────────────────────────────────────────────────
   # Path-filter gate (GRO-jg8v): heavyweight Build+Sign and CMX Test jobs are
   # skipped on docs-only PRs (markdown, FRICTION_LOG, vault knowledge, etc.).
-  # Lint and Test still runs unconditionally — it's cheap (<2m on cache hit)
-  # and catches markdown / helm-lint / link regressions on docs PRs.
+  # GRO-6gq2: lint-test was split into go-test/node-test/helm-lint and is
+  # also gated on `code == 'true'` so docs-only PRs skip all of them too —
+  # they report `skipped` (== success for branch protection).
   #
   # NOTE: filter is intentionally job-level (dorny/paths-filter) NOT
   # workflow-level `paths:` / `paths-ignore:`. Workflow-level filtering would
@@ -105,10 +106,23 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
-  # ── Lint and Test ─────────────────────────────────────────────────────────
-  lint-test:
-    name: Lint and Test
+  # ── Lint and Test (parallel split) ────────────────────────────────────────
+  # GRO-6gq2: previously a single `lint-test` job ran helm-lint + go-test +
+  # npm-{ci,lint,test} serially on one runner (~3-4 min wall-clock). Split
+  # into three jobs running on separate runners so wall-clock collapses to
+  # max(go-test, node-test, helm-lint) ≈ 1.5-2 min. Each job:
+  #   - gates on `needs.detect-changes.outputs.code == 'true'` (GRO-jg8v) so
+  #     docs-only PRs skip all three (skipped == success for branch protection).
+  #   - retains its respective build-cache (GRO-i987): setup-go cache: true,
+  #     setup-node cache: 'npm', actions/cache@v4 for chart/charts/.
+  #   - emits the GRO-qrdt per-job timing summary independently.
+  # Downstream `build-sign` and `cmx-test` `needs:` are updated to gate on
+  # all three new jobs (was: `lint-test`).
+  go-test:
+    name: Go test
     runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
     steps:
       - name: Record job start
         id: job_start
@@ -124,41 +138,65 @@ jobs:
           cache: true
           cache-dependency-path: backend/go.sum
 
+      - name: Go test
+        working-directory: backend
+        # -p 4: package-level parallelism (GRO-i987). -shuffle on: surfaces
+        # inter-test ordering bugs without materially slowing the suite.
+        run: go test -p 4 -shuffle=on ./...
+
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+  node-test:
+    name: Node test
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
+    steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version-file: frontend/package.json
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-        with:
-          version: ${{ env.HELM_VERSION }}
-
-      # Cache Helm subchart tarballs keyed on Chart.lock hash (GRO-i987).
-      # helm dependency update below is a no-op on cache hit (tarballs already
-      # present + matching Chart.lock), so cache-hit skips subchart re-fetch.
-      - name: Cache helm chart deps
-        uses: actions/cache@v4
-        with:
-          path: chart/charts
-          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
-          restore-keys: |
-            helm-deps-${{ runner.os }}-
-
-      - name: Helm lint
-        run: |
-          helm dependency update chart/
-          # Helm v4 requires extracted subchart directories for linting
-          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
-          helm lint chart/
-
-      - name: Go test
-        working-directory: backend
-        # -p 4: package-level parallelism (GRO-i987). -shuffle on: surfaces
-        # inter-test ordering bugs without materially slowing the suite.
-        run: go test -p 4 -shuffle=on ./...
 
       - name: npm install
         working-directory: frontend
@@ -206,6 +244,76 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 0
 
+  helm-lint:
+    name: Helm lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: needs.detect-changes.outputs.code == 'true'
+    steps:
+      - name: Record job start
+        id: job_start
+        run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # Cache Helm subchart tarballs keyed on Chart.lock hash (GRO-i987).
+      # helm dependency update below is a no-op on cache hit (tarballs already
+      # present + matching Chart.lock), so cache-hit skips subchart re-fetch.
+      - name: Cache helm chart deps
+        uses: actions/cache@v4
+        with:
+          path: chart/charts
+          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
+          restore-keys: |
+            helm-deps-${{ runner.os }}-
+
+      - name: Helm lint
+        run: |
+          helm dependency update chart/
+          # Helm v4 requires extracted subchart directories for linting
+          cd chart/charts && for f in *.tgz; do [ -f "$f" ] && tar xzf "$f"; done && cd ../..
+          helm lint chart/
+
+      # GRO-qrdt: per-job wall-clock timing summary.
+      - name: Job timing summary
+        if: always()
+        env:
+          JOB_NAME: ${{ github.job }}
+          RUNNER_OS: ${{ runner.os }}
+          JOB_START: ${{ steps.job_start.outputs.epoch }}
+        run: |
+          set +e
+          END=$(date +%s)
+          if [ -z "$JOB_START" ] || ! [ "$JOB_START" -eq "$JOB_START" ] 2>/dev/null; then
+            DUR_HUMAN="unknown"
+            START_ISO="unknown"
+            END_ISO="unknown"
+          else
+            DUR=$((END - JOB_START))
+            MIN=$((DUR / 60))
+            SEC=$((DUR % 60))
+            DUR_HUMAN="${MIN}m ${SEC}s (${DUR}s)"
+            START_ISO=$(date -u -d "@${JOB_START}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+            END_ISO=$(date -u -d "@${END}" --iso-8601=seconds 2>/dev/null || echo "unknown")
+          fi
+          {
+            echo "### Job timing: ${JOB_NAME}"
+            echo ""
+            echo "| Metric | Value |"
+            echo "|---|---|"
+            echo "| Duration | ${DUR_HUMAN} |"
+            echo "| Runner | ${RUNNER_OS} |"
+            echo "| Start | ${START_ISO} |"
+            echo "| End | ${END_ISO} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
   # ── Build, Push, and Sign Images (matrix: frontend || backend) ───────────
   # GRO-fuxa: previously a single job that built+pushed+signed both images
   # serially (~3.5m wall-clock). Split into a 2-leg matrix so the two images
@@ -215,7 +323,8 @@ jobs:
   build-sign:
     name: Build, Push, and Sign (${{ matrix.service }})
     runs-on: ubuntu-latest
-    needs: [detect-changes, lint-test]
+    # GRO-6gq2: gate on all three parallel test jobs (was: lint-test).
+    needs: [detect-changes, go-test, node-test, helm-lint]
     if: needs.detect-changes.outputs.code == 'true'
     permissions:
       contents: read
@@ -260,8 +369,17 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: ${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}
-          cache-from: type=gha,scope=${{ matrix.service }}-${{ github.workflow }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}-${{ github.workflow }}
+          # GRO-n9bk: registry-backed buildx cache. Branch-independent (vs
+          # type=gha which scopes per-ref + branch and is aggressively evicted
+          # under GHA's 10GB-per-repo budget). Cache layers are pushed to
+          # `groovelab-<service>:buildcache` on GHCR, sharing across PRs and
+          # main. Per-image ref keeps frontend and backend caches independent.
+          # `image-manifest=true,oci-mediatypes=true` is required for GHCR
+          # compatibility with the registry cache exporter.
+          cache-from: |
+            type=registry,ref=${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:buildcache
+          cache-to: |
+            type=registry,ref=${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
 
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
@@ -370,13 +488,52 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Install Replicated CLI
+      # GRO-sm7y: cache resolved subchart tarballs keyed on Chart.lock hash.
+      # Mirrors helm-lint's cache (added in GRO-i987). Both `Package chart`
+      # and `Pre-install cluster-shared infra` run `helm dependency update
+      # chart/`; on cache hit the subchart tarballs are already on disk so
+      # the dep-update is effectively a no-op (~10-30s saved per run when
+      # Chart.lock is unchanged). Per-runner-OS prefix matches helm-lint.
+      - name: Cache helm chart deps
+        uses: actions/cache@v4
+        with:
+          path: chart/charts
+          key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
+          restore-keys: |
+            helm-deps-${{ runner.os }}-
+
+      # GRO-uqtg: single point-of-truth for chart-dep resolution in this job.
+      # Previously each downstream step that needed extracted subcharts called
+      # `helm dependency update chart/` itself, which re-ran registry lookups
+      # and re-downloaded tarballs ~10-20s per invocation. Consolidating here
+      # means downstream steps (Package chart, Pre-install cluster-shared
+      # infra, Install groovelab) can rely on `chart/charts/*.tgz` AND
+      # `chart/charts/<dep>/` already existing.
+      - name: Resolve chart dependencies
         run: |
-          curl -s https://api.github.com/repos/replicatedhq/replicated/releases/latest \
-            | grep "browser_download_url.*linux_amd64.tar.gz" \
-            | cut -d '"' -f 4 \
-            | xargs curl -sL \
-            | tar xz -C /usr/local/bin replicated
+          helm dependency update chart/
+          # Helm v4 requires extracted subchart directories for downstream
+          # lint/install/template operations. Extract tarballs once here so
+          # downstream steps can rely on both the tarball and the directory
+          # being present.
+          cd chart/charts
+          for f in *.tgz; do
+            [ -f "$f" ] || continue
+            DIR="${f%.tgz}"
+            if [ ! -d "$DIR" ]; then
+              tar xzf "$f"
+            fi
+          done
+          cd ../..
+          echo "Chart dependencies resolved:"
+          ls -la chart/charts/
+
+      # GRO-mf1d: pinned, deduplicated install via local composite action
+      # (.github/actions/setup-replicated-cli). The previous inline pattern
+      # called api.github.com/.../releases/latest, which was rate-limited and
+      # silently chased the newest CLI release.
+      - name: Install Replicated CLI
+        uses: ./.github/actions/setup-replicated-cli
 
       # Step 1 — Compute slug and chart version from the PR branch.
       # Slug normalization algorithm (see story GRO-lcva):
@@ -422,7 +579,9 @@ jobs:
           SLUG: ${{ steps.slug.outputs.slug }}
           CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
         run: |
-          helm dependency update chart/
+          # GRO-uqtg: chart deps are resolved once in the upstream "Resolve
+          # chart dependencies" step. No need to re-run `helm dependency
+          # update` here.
           mkdir -p release/
           # --app-version MUST match the GHCR image tag the build job pushed
           # (env IMAGE_TAG, format `pr-<PR_NUMBER>-<SHORT_SHA>`), because the
@@ -682,13 +841,9 @@ jobs:
             echo "[$(date +%H:%M:%S)] Reusing shared cluster — CNPG + cert-manager already installed; skipping."
             exit 0
           fi
-          helm dependency update chart/
-          # Extract subcharts so we can install them directly.
-          # `helm dependency update` populates chart/charts/<dep>-*.tgz;
-          # extract idempotently (skip if already extracted from a prior step).
-          (cd chart/charts && for f in cloudnative-pg-*.tgz cert-manager-*.tgz; do
-             [ -f "$f" ] && [ ! -d "${f%.tgz}" ] && tar xzf "$f" || true
-           done)
+          # GRO-uqtg: chart deps + tarball extraction are handled once in the
+          # upstream "Resolve chart dependencies" step. `chart/charts/<dep>/`
+          # is already present here for both cloudnative-pg and cert-manager.
           echo "[$(date +%H:%M:%S)] Installing CNPG operator into cnpg-system..."
           helm install cnpg-operator chart/charts/cloudnative-pg \
             --namespace cnpg-system --create-namespace \
@@ -1087,7 +1242,10 @@ jobs:
     # timing via REST so it captures both matrix legs as separate rows.
     # build-sign-collect is included so the aggregator runs after the
     # collector resolves (and to prevent it racing past matrix completion).
-    needs: [detect-changes, lint-test, build-sign, build-sign-collect, cmx-test]
+    # GRO-6gq2: lint-test split into go-test/node-test/helm-lint; aggregator
+    # consumes per-job timing via REST so each parallel job appears as its
+    # own row in the sticky comment.
+    needs: [detect-changes, go-test, node-test, helm-lint, build-sign, build-sign-collect, cmx-test]
     if: always() && github.event_name == 'pull_request'
     permissions:
       pull-requests: write
