@@ -393,3 +393,15 @@ Two preventable patterns surfaced:
 2. Release-artifact reproducibility: every field that goes into a release manifest should be either (a) derivable from the git tag, or (b) checked into the repo. Empty fields with implicit "CI fills it in later" semantics fail both criteria — and in this case the "CI fills it in later" was a lie.
 
 **Severity:** annoyance
+
+## Entry 37 — 2026-05-01 — annoyance
+
+**Trying to:** Implement `make release` dev-loop default that produces `<chart-version>+<sha7>` SemVer (build metadata per spec item 10) on every invocation, building + pushing images at the derived version and packaging the chart with `helm package --version` + `--app-version`.
+
+**Expected:** Since SemVer 2.0 explicitly allows `+` in build metadata and Helm v3.8+/v4 OCI clients translate `+` → `_` automatically for OCI tags, the entire pipeline (docker build, image push, helm package, replicated release create) would accept the `+` form transparently.
+
+**Actual:** Helm and Replicated CLI accepted `+` cleanly — `helm package --version 0.1.1+83ff2d0` produced `release/groovelab-0.1.1+83ff2d0.tgz` with helpers preserved, and `replicated release create --version 0.1.1+83ff2d0` produced sequences 133-136 on Unstable with the `+` form intact in chart metadata. **But docker buildx rejected `+` in image tags** with `invalid tag "...:v0.1.1+83ff2d0": invalid reference format`. Per OCI distribution spec, tags match `[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}` — `+` is not in the allowed set. Helm-OCI clients translate this transparently for chart artifacts (so `helm push` and `helm pull --version 0.1.1+sha7` both work), but docker/buildx for plain image tags has no such translation.
+
+**Resolution:** In the Makefile, add a one-line `tr '+' '_'` translation for the image-tag layer ONLY: `REL_VERSION_TAG=$(printf '%s' "$REL_VERSION" | tr '+' '_')`. Pass `$REL_VERSION_TAG` to `docker buildx build --tag` and use `$REL_VERSION` (with `+`) for `helm package --version`, `--app-version`, and `replicated release create --version`. The chart's deployed image-tag wiring (`{{ .Values.image.<side>.tag | default .Chart.AppVersion }}`) needs `app-version` to also use the `_` form so the rendered manifest references a pullable tag. Both forms appear in the same release artifact: `+` in chart metadata, `_` in image references. ~5 minutes once the failure surfaced; the smoke-verify AC anticipated this risk and the fix matched the prediction exactly.
+
+**Severity:** annoyance
