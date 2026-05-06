@@ -405,3 +405,21 @@ Two preventable patterns surfaced:
 **Resolution:** In the Makefile, add a one-line `tr '+' '_'` translation for the image-tag layer ONLY: `REL_VERSION_TAG=$(printf '%s' "$REL_VERSION" | tr '+' '_')`. Pass `$REL_VERSION_TAG` to `docker buildx build --tag` and use `$REL_VERSION` (with `+`) for `helm package --version`, `--app-version`, and `replicated release create --version`. The chart's deployed image-tag wiring (`{{ .Values.image.<side>.tag | default .Chart.AppVersion }}`) needs `app-version` to also use the `_` form so the rendered manifest references a pullable tag. Both forms appear in the same release artifact: `+` in chart metadata, `_` in image references. ~5 minutes once the failure surfaced; the smoke-verify AC anticipated this risk and the fix matched the prediction exactly.
 
 **Severity:** annoyance
+
+## Entry 38 — 2026-05-06 — annoyance
+
+**Trying to:** Expose a CMX cluster's frontend service on a public URL via `replicated cluster port expose`. Two parts: (a) the per-team RBAC on the limited CI service account had to grant the right resource paths, and (b) `make expose` should be idempotent so re-running on an already-exposed port doesn't pile up duplicate hostnames.
+
+**Expected:** `replicated cluster port expose <id> --port 30080 --protocol https` succeeds with the limited CI token, returns a `*.ingress.replicatedcluster.com` URL, and `replicated cluster port rm` works the same way for cleanup. Re-running `make expose` finds the existing exposure and prints the same URL.
+
+**Actual:** Two friction points:
+1. **Resource-path mismatch in the limited RBAC policy.** The policy explicitly granted `kots/cluster/*/port/expose`, `kots/cluster/*/port/list`, and `kots/cluster/*/port/delete`. Expose and list worked. But `port rm` failed with `access to "kots/cluster/<id>/addon/<addon-id>/delete" is denied` — the actual path Replicated checks for port deletion is under the `addon/` namespace, not `port/`. The CLI command lives at `cluster port rm` but the underlying API operates on cluster addons. Adding `kots/cluster/*/addon/*/delete` and `kots/cluster/*/addon/*/read` to the policy unblocks rm. Same op being checkable under two different resource paths in the same RBAC system would have been the surprise; the docs that list cluster resource paths don't mention the addon namespace at all.
+2. **`cluster port expose` is not idempotent.** Each invocation against the same upstream port creates a NEW `addon` (new hostname under `*.ingress.replicatedcluster.com`). Re-running `make expose` ten times gives ten ready URLs, all routing to the same NodePort. To make `make expose` idempotent, we now query `replicated cluster port ls --output json` first, look for a ready exposure on the requested upstream port, and reuse the existing hostname if found. Only call `cluster port expose` when no ready exposure exists. If we hadn't caught this, the `cluster port ls` output would balloon over the lifetime of a long-lived UAT cluster.
+
+**Resolution:**
+1. Patched `groovelab-ci` policy via the admin token to add the addon-namespace permissions. ~3 minutes.
+2. Rewrote `make expose` to check `cluster port ls` first; reuse existing hostname if found, only expose if not. Service-patch (ClusterIP → NodePort) is also idempotent (skip if already correct). Cleaned up the duplicate hostname accumulated during initial dev iteration. ~5 minutes.
+
+This entry also resolves Entry 28 ("`cluster port expose` denied for limited RBAC, regardless of distribution"). Four weeks ago that operation was denied even on rke2; today it succeeded immediately on rke2 with the limited token. Either the team-level enablement was added since, or the rke2 path-matching changed. The k3s rejection is a separate constraint — `cluster port expose` only works on VM-based distributions per the CLI help, so k3s clusters cannot use this path regardless of RBAC.
+
+**Severity:** annoyance

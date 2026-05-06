@@ -68,16 +68,33 @@ kubectl -n groovelab get pods -o jsonpath='{range .items[*]}{range .spec.contain
 
 ### 1:30 – 2:30 — Licensed access + SDK license endpoint
 
-Terminal:
-```bash
-kubectl -n groovelab port-forward svc/groovelab-backend 18080:8080 &
-kubectl -n groovelab port-forward svc/groovelab-frontend 18443:443 &
+Terminal — for a UAT/demo cluster on RKE2 or Embedded Cluster, expose a
+public URL once at provisioning time:
 
-curl -s localhost:18080/healthz | jq
-curl -s localhost:18080/api/replicated/license | jq '{id:.license_id, type:.license_type}'
+```bash
+make expose CLUSTER=groovelab-uat-demo
+# OK: groovelab is reachable at: https://<auto>.ingress.replicatedcluster.com
+```
+
+(Replicated CMX issues a Let's Encrypt cert and a hostname under
+`*.ingress.replicatedcluster.com`. Idempotent — re-running reuses the same
+URL. VM-based distributions only; k3s containers are rejected.)
+
+Hit the public URL directly:
+```bash
+URL=https://<your-host>.ingress.replicatedcluster.com
+curl -s $URL/healthz | jq
+curl -s $URL/api/replicated/license | jq '{id:.license_id, type:.license_type}'
 ```
 
 Browser → register a user, log in, hit `/tracks` page — loads.
+
+If you're on a k3s or container-based cluster (no `cluster port expose`
+support), fall back to port-forward:
+```bash
+kubectl -n groovelab port-forward svc/groovelab-backend 18080:8080 &
+kubectl -n groovelab port-forward svc/groovelab-frontend 18443:443 &
+```
 
 ### 2:30 – 3:30 — Entitlement live-toggle (no redeploy)
 

@@ -32,7 +32,7 @@ CHART_TGZ := $(DIST_DIR)/$(APP_SLUG)-$(CHART_VERSION).tgz
         release-unstable \
         pr-slug pr-channel pr-customer pr-cluster pr-install pr-test pr-teardown \
         build build-frontend build-backend release \
-        customer cluster deploy smoke uat teardown \
+        customer cluster deploy expose smoke uat teardown \
         _require-version _require-version-tag _require-customer _require-cluster \
         _require-token _require-not-main
 
@@ -72,6 +72,7 @@ help: ## Show available targets
 	@echo "  make customer NAME=uat-v0.1.3 CHANNEL=Unstable"
 	@echo "  make cluster NAME=uat-v0-1-3 TTL=2h"
 	@echo "  make deploy VERSION=0.1.2 CUSTOMER=uat-v0.1.3 CLUSTER=uat-v0-1-3"
+	@echo "  make expose CLUSTER=uat-v0-1-3                 # public ingress URL (rke2/EC clusters only)"
 	@echo "  make uat VERSION=0.1.2 CHANNEL=Unstable        # composite of the three above + smoke"
 	@echo "  make smoke NAMESPACE=groovelab CLUSTER=uat-v0-1-3"
 	@echo "  make teardown CUSTOMER=uat-v0.1.3 CLUSTER=uat-v0-1-3"
@@ -809,6 +810,66 @@ deploy: _require-token _require-version _require-customer _require-cluster ## Cu
 
 # Lower-case helper for OCI URL channel slug (Replicated uses lowercase channel slugs).
 lower = $(shell echo "$(1)" | tr '[:upper:]' '[:lower:]')
+
+# ---------- expose --------------------------------------------------------
+#
+# Provision a public ingress URL on a CMX cluster and wire the frontend
+# service to it. Replicated CMX issues a hostname under
+# *.ingress.replicatedcluster.com plus a Let's Encrypt cert.
+#
+# Required: CLUSTER=<cluster-name>. Optional: PORT=<nodePort> (default 30080),
+# NAMESPACE=<ns> (default groovelab), SVC=<svc> (default groovelab-frontend),
+# SVC_PORT=<port> (default 443; the service port that backs the NodePort).
+#
+# Caveats:
+#   - Only works on VM-based distributions (rke2, embedded-cluster, kind);
+#     k3s and similar container distributions are rejected by CMX.
+#   - The hostname is auto-generated and changes when re-exposed.
+
+expose: _require-token _require-cluster ## Expose CLUSTER's frontend on a public Replicated ingress URL (rke2/EC only; idempotent)
+	@set -euo pipefail; \
+	PORT="$${PORT:-30080}"; \
+	NAMESPACE="$${NAMESPACE:-$(APP_SLUG)}"; \
+	SVC="$${SVC:-$(APP_SLUG)-frontend}"; \
+	KUBECONFIG_PATH="$(DIST_DIR)/$(CLUSTER)-kubeconfig.yaml"; \
+	if [ ! -f "$$KUBECONFIG_PATH" ]; then \
+	  echo "ERROR: $$KUBECONFIG_PATH not found. Run 'make cluster NAME=$(CLUSTER)' first." >&2; \
+	  exit 1; \
+	fi; \
+	export KUBECONFIG="$$PWD/$$KUBECONFIG_PATH"; \
+	echo "==> Resolving cluster ID for $(CLUSTER)"; \
+	CID=$$(replicated cluster ls --output json \
+	  | jq -r --arg n "$(CLUSTER)" '[.[] | select(.name == $$n and .status == "running")][0].id // empty'); \
+	if [ -z "$$CID" ]; then \
+	  echo "ERROR: cluster $(CLUSTER) not found or not running." >&2; \
+	  exit 1; \
+	fi; \
+	EXISTING=$$(replicated cluster port ls "$$CID" --output json --app "$(APP_SLUG)" 2>/dev/null \
+	  | jq -r --arg p "$$PORT" 'map(select(.upstream_port == ($$p | tonumber) and .state == "ready")) | .[0] // empty | .hostname // ""'); \
+	if [ -n "$$EXISTING" ]; then \
+	  echo "==> Port $$PORT already exposed at $$EXISTING — reusing (idempotent)."; \
+	  echo "==> Ensuring $$NAMESPACE/$$SVC is NodePort:$$PORT"; \
+	  CUR_TYPE=$$(kubectl get svc "$$SVC" -n "$$NAMESPACE" -o jsonpath='{.spec.type}' 2>/dev/null || echo ""); \
+	  CUR_NP=$$(kubectl get svc "$$SVC" -n "$$NAMESPACE" -o jsonpath='{.spec.ports[0].nodePort}' 2>/dev/null || echo ""); \
+	  if [ "$$CUR_TYPE" != "NodePort" ] || [ "$$CUR_NP" != "$$PORT" ]; then \
+	    kubectl patch svc "$$SVC" -n "$$NAMESPACE" --type='json' \
+	      -p='[{"op":"replace","path":"/spec/type","value":"NodePort"},{"op":"add","path":"/spec/ports/0/nodePort","value":'$$PORT'}]'; \
+	  else \
+	    echo "    (already NodePort:$$PORT, no change)"; \
+	  fi; \
+	  echo ""; \
+	  echo "OK: $(APP_SLUG) is reachable at: https://$$EXISTING"; \
+	else \
+	  echo "==> Patching $$NAMESPACE/$$SVC to NodePort:$$PORT"; \
+	  kubectl patch svc "$$SVC" -n "$$NAMESPACE" --type='json' \
+	    -p='[{"op":"replace","path":"/spec/type","value":"NodePort"},{"op":"add","path":"/spec/ports/0/nodePort","value":'$$PORT'}]'; \
+	  echo "==> replicated cluster port expose $$CID --port $$PORT --protocol https"; \
+	  replicated cluster port expose "$$CID" --port "$$PORT" --protocol https --app "$(APP_SLUG)"; \
+	  URL=$$(replicated cluster port ls "$$CID" --output json --app "$(APP_SLUG)" \
+	    | jq -r --arg p "$$PORT" 'map(select(.upstream_port == ($$p | tonumber))) | sort_by(.created_at) | reverse | .[0].hostname // ""'); \
+	  echo ""; \
+	  echo "OK: $(APP_SLUG) is reachable at: https://$$URL"; \
+	fi
 
 # ---------- smoke ----------------------------------------------------------
 
