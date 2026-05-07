@@ -54,9 +54,12 @@ func fakeSDKServer(t *testing.T) (*httptest.Server, *fakeSDKState) {
 
 	state := &fakeSDKState{
 		licenseInfo: `{
-			"license_id": "lic-123",
-			"license_type": "paid",
-			"expires_at": "2027-01-01T00:00:00Z",
+			"licenseID": "lic-123",
+			"licenseType": "paid",
+			"expirationTime": "2027-01-01T00:00:00Z",
+			"customerName": "Test Customer",
+			"channelName": "Unstable",
+			"appSlug": "groovelab",
 			"entitlements": [
 				{"field": "track_export_enabled", "value": "true"}
 			]
@@ -616,4 +619,62 @@ func TestValidLicenseAllowsAccess(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	assert.Equal(t, http.StatusOK, rec.Code, "valid license should allow access")
+}
+
+// TestLicensePolling_LocksSDKURL verifies that the SDK client dials the
+// Replicated SDK at /api/v1/license/info (not /api/v1/license) and that the
+// response is transformed from camelCase to snake_case before caching.
+// GRO-7946: this test locks the upstream URL so a refactor cannot silently
+// re-break the path.
+func TestLicensePolling_LocksSDKURL(t *testing.T) {
+	rdClient := testRedis(t)
+	ctx := context.Background()
+
+	var requestedPath string
+	mux := chi.NewRouter()
+	mux.Get("/api/v1/license/info", func(w http.ResponseWriter, r *http.Request) {
+		requestedPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"licenseID": "lic-456",
+			"licenseType": "dev",
+			"customerName": "UAT Customer",
+			"channelName": "Unstable",
+			"appSlug": "groovelab",
+			"expirationTime": null
+		}`))
+	})
+	// The wrong path should 404 if accidentally dialed.
+	mux.Get("/api/v1/license", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
+	})
+
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	client := replicated.NewSDKClientWithURL(srv.URL, rdClient, nil)
+	client.Start(ctx)
+	defer client.Stop()
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Assert the correct path was requested.
+	assert.Equal(t, "/api/v1/license/info", requestedPath, "SDK client must dial /api/v1/license/info")
+
+	// Assert the cached data is transformed to snake_case.
+	data, err := rdClient.Get(ctx, replicated.KeyLicenseInfo).Result()
+	require.NoError(t, err, "license info should be cached in Redis")
+
+	var cached map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(data), &cached))
+
+	assert.Equal(t, "lic-456", cached["license_id"], "cached response should have snake_case license_id")
+	assert.Equal(t, "dev", cached["license_type"], "cached response should have snake_case license_type")
+	assert.Equal(t, "UAT Customer", cached["customer_name"], "cached response should have snake_case customer_name")
+	assert.Equal(t, "Unstable", cached["channel_name"], "cached response should have snake_case channel_name")
+	assert.Equal(t, "groovelab", cached["app_slug"], "cached response should have snake_case app_slug")
+	assert.Nil(t, cached["expirationTime"], "cached response should not contain camelCase keys")
+	assert.Nil(t, cached["licenseID"], "cached response should not contain camelCase keys")
 }

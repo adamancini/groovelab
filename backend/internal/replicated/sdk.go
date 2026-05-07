@@ -154,7 +154,62 @@ func (c *SDKClient) Stop() {
 	c.wg.Wait()
 }
 
-// pollLicenseInfo fetches license info from the SDK and caches it in Redis.
+// sdkLicenseResponse is the shape returned by the Replicated SDK /api/v1/license/info
+// endpoint (camelCase).
+type sdkLicenseResponse struct {
+	LicenseID      string        `json:"licenseID"`
+	LicenseType    string        `json:"licenseType"`
+	CustomerName   string        `json:"customerName"`
+	ChannelName    string        `json:"channelName"`
+	AppSlug        string        `json:"appSlug"`
+	ExpirationTime *string       `json:"expirationTime"`
+	Entitlements   []Entitlement `json:"entitlements"`
+}
+
+// licenseResponse is the wire shape consumed by the frontend (snake_case).
+type licenseResponse struct {
+	LicenseID    string        `json:"license_id"`
+	LicenseType  string        `json:"license_type"`
+	CustomerName string        `json:"customer_name"`
+	ChannelName  string        `json:"channel_name"`
+	AppSlug      string        `json:"app_slug"`
+	ExpiresAt    *string       `json:"expires_at"`
+	Entitlements []Entitlement `json:"entitlements,omitempty"`
+}
+
+// Entitlement represents a single license entitlement field.
+type Entitlement struct {
+	Field string `json:"field"`
+	Value string `json:"value"`
+}
+
+// transformLicenseResponse maps the SDK's camelCase response to the snake_case
+// wire shape expected by the frontend and entitlement middleware.
+func transformLicenseResponse(raw []byte) ([]byte, error) {
+	var sdk sdkLicenseResponse
+	if err := json.Unmarshal(raw, &sdk); err != nil {
+		return nil, fmt.Errorf("unmarshal sdk license response: %w", err)
+	}
+
+	resp := licenseResponse{
+		LicenseID:    sdk.LicenseID,
+		LicenseType:  sdk.LicenseType,
+		CustomerName: sdk.CustomerName,
+		ChannelName:  sdk.ChannelName,
+		AppSlug:      sdk.AppSlug,
+		ExpiresAt:    sdk.ExpirationTime,
+		Entitlements: sdk.Entitlements,
+	}
+
+	out, err := json.Marshal(resp)
+	if err != nil {
+		return nil, fmt.Errorf("marshal transformed license response: %w", err)
+	}
+	return out, nil
+}
+
+// pollLicenseInfo fetches license info from the SDK, transforms it to the
+// frontend wire shape (snake_case), and caches it in Redis.
 func (c *SDKClient) pollLicenseInfo(ctx context.Context) {
 	body, err := c.doGet(ctx, "/api/v1/license/info")
 	if err != nil {
@@ -162,7 +217,13 @@ func (c *SDKClient) pollLicenseInfo(ctx context.Context) {
 		return
 	}
 
-	if err := c.redis.Set(ctx, KeyLicenseInfo, string(body), TTLLicenseInfo).Err(); err != nil {
+	transformed, err := transformLicenseResponse(body)
+	if err != nil {
+		log.Printf("[replicated] warning: failed to transform license info: %v", err)
+		return
+	}
+
+	if err := c.redis.Set(ctx, KeyLicenseInfo, string(transformed), TTLLicenseInfo).Err(); err != nil {
 		log.Printf("[replicated] warning: failed to cache license info: %v", err)
 	}
 }
