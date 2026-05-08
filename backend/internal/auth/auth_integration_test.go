@@ -28,10 +28,10 @@ import (
 
 // testEnv holds shared test infrastructure for auth integration tests.
 type testEnv struct {
-	pgPool      *pgxpool.Pool
-	rdClient    *redis.Client
-	server      *httptest.Server
-	authSystem  *grooveauth.Auth
+	pgPool     *pgxpool.Pool
+	rdClient   *redis.Client
+	server     *httptest.Server
+	authSystem *grooveauth.Auth
 }
 
 func setupTestEnv(t *testing.T) *testEnv {
@@ -88,9 +88,9 @@ func setupTestEnv(t *testing.T) *testEnv {
 
 	// Set up auth system. The test server URL will be set after creation.
 	authSystem, err := grooveauth.Setup(grooveauth.Config{
-		RootURL:   "http://localhost", // will be overridden
-		MountPath: "/api/v1/auth",
-		Pool:      pgPool,
+		RootURL:     "http://localhost", // will be overridden
+		MountPath:   "/api/v1/auth",
+		Pool:        pgPool,
 		RedisClient: rdClient,
 		SessionConfig: grooveauth.SessionConfig{
 			CookieName: "groovelab_session",
@@ -418,6 +418,63 @@ func TestRedisSessionTTL(t *testing.T) {
 	// TTL should be close to 24 hours (within a few seconds of creation).
 	assert.True(t, ttl > 23*time.Hour && ttl <= 24*time.Hour,
 		"session TTL should be approximately 24 hours, got %v", ttl)
+}
+
+// registerUserWithName sends a POST /api/v1/auth/register request including a name field.
+func registerUserWithName(t *testing.T, client *http.Client, baseURL, email, password, name string) *http.Response {
+	t.Helper()
+	return postJSON(t, client, baseURL+"/api/v1/auth/register", map[string]string{
+		"email":    email,
+		"password": password,
+		"name":     name,
+	})
+}
+
+// TestRegistration_WithName_PersistsName verifies that a name supplied at
+// registration is stored and returned by /auth/me. GRO-0ar3 AC #4.
+func TestRegistration_WithName_PersistsName(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Register with name.
+	resp := registerUserWithName(t, client, env.server.URL, "named@example.com", "securepassword1", "Test User")
+	defer resp.Body.Close()
+	assert.True(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusTemporaryRedirect,
+		"expected 200, 302, or 307 for registration, got %d", resp.StatusCode)
+
+	// Verify via /me.
+	meResp, err := client.Get(env.server.URL + "/api/v1/auth/me")
+	require.NoError(t, err)
+	me := readBody(t, meResp)
+	assert.Equal(t, http.StatusOK, meResp.StatusCode)
+	assert.Equal(t, "named@example.com", me["email"])
+	assert.Equal(t, "Test User", me["name"], "/auth/me should return the stored name")
+	assert.Equal(t, true, me["isAdmin"], "first registered user should be admin")
+}
+
+// TestRegistration_WithoutName_ReturnsNullName verifies that omitting the name
+// field during registration still succeeds and /auth/me returns name: null.
+// GRO-0ar3 AC #5.
+func TestRegistration_WithoutName_ReturnsNullName(t *testing.T) {
+	env := setupTestEnv(t)
+	client := newClientWithCookies(t)
+
+	// Register without name (standard helper omits name field).
+	resp := registerUser(t, client, env.server.URL, "noname@example.com", "securepassword1")
+	defer resp.Body.Close()
+	assert.True(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusTemporaryRedirect,
+		"expected 200, 302, or 307 for registration, got %d", resp.StatusCode)
+
+	// Verify via /me.
+	meResp, err := client.Get(env.server.URL + "/api/v1/auth/me")
+	require.NoError(t, err)
+	me := readBody(t, meResp)
+	assert.Equal(t, http.StatusOK, meResp.StatusCode)
+	assert.Equal(t, "noname@example.com", me["email"])
+	assert.Nil(t, me["name"], "/auth/me should return null name when not provided")
+	// In an isolated test env this is the first (admin) user; assert isAdmin is
+	// populated (not null) rather than its specific value.
+	assert.NotNil(t, me["isAdmin"], "/auth/me should return a populated isAdmin field, not null")
 }
 
 func mustParseURL(t *testing.T, rawURL string) *url.URL {

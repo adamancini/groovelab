@@ -21,18 +21,18 @@ func New(pool *pgxpool.Pool) *Querier {
 }
 
 // CreateUser inserts a new user and returns the created row.
-func (q *Querier) CreateUser(ctx context.Context, email, passwordHash, role string) (*User, error) {
+func (q *Querier) CreateUser(ctx context.Context, email, passwordHash, role string, name *string) (*User, error) {
 	var u User
 	var ph *string
 	if passwordHash != "" {
 		ph = &passwordHash
 	}
 	err := q.pool.QueryRow(ctx,
-		`INSERT INTO users (email, password_hash, role)
-		 VALUES ($1, $2, $3)
-		 RETURNING id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
-		email, ph, role,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+		`INSERT INTO users (email, password_hash, role, name)
+		 VALUES ($1, $2, $3, $4)
+		 RETURNING id, email, password_hash, role, name, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
+		email, ph, role, name,
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Name, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("create user: %w", err)
 	}
@@ -43,10 +43,10 @@ func (q *Querier) CreateUser(ctx context.Context, email, passwordHash, role stri
 func (q *Querier) GetUserByEmail(ctx context.Context, email string) (*User, error) {
 	var u User
 	err := q.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
+		`SELECT id, email, password_hash, role, name, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
 		 FROM users WHERE email = $1`,
 		email,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Name, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -60,10 +60,10 @@ func (q *Querier) GetUserByEmail(ctx context.Context, email string) (*User, erro
 func (q *Querier) GetUserByID(ctx context.Context, id string) (*User, error) {
 	var u User
 	err := q.pool.QueryRow(ctx,
-		`SELECT id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
+		`SELECT id, email, password_hash, role, name, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
 		 FROM users WHERE id = $1`,
 		id,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Name, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
@@ -74,7 +74,7 @@ func (q *Querier) GetUserByID(ctx context.Context, id string) (*User, error) {
 }
 
 // UpdateUser updates a user row and returns the updated record.
-func (q *Querier) UpdateUser(ctx context.Context, id, email, passwordHash, role string, oauthProviders, instrumentSettings, preferences json.RawMessage) (*User, error) {
+func (q *Querier) UpdateUser(ctx context.Context, id, email, passwordHash, role string, name *string, oauthProviders, instrumentSettings, preferences json.RawMessage) (*User, error) {
 	var u User
 	var ph *string
 	if passwordHash != "" {
@@ -82,12 +82,12 @@ func (q *Querier) UpdateUser(ctx context.Context, id, email, passwordHash, role 
 	}
 	err := q.pool.QueryRow(ctx,
 		`UPDATE users
-		 SET email = $2, password_hash = $3, role = $4, oauth_providers = $5,
-		     instrument_settings = $6, preferences = $7, updated_at = now()
+		 SET email = $2, password_hash = $3, role = $4, name = $5, oauth_providers = $6,
+		     instrument_settings = $7, preferences = $8, updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
-		id, email, ph, role, oauthProviders, instrumentSettings, preferences,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+		 RETURNING id, email, password_hash, role, name, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
+		id, email, ph, role, name, oauthProviders, instrumentSettings, preferences,
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Name, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("update user: %w", err)
 	}
@@ -97,7 +97,7 @@ func (q *Querier) UpdateUser(ctx context.Context, id, email, passwordHash, role 
 // ListAllUsers returns all users ordered by created_at DESC (admin use).
 func (q *Querier) ListAllUsers(ctx context.Context) ([]*User, error) {
 	rows, err := q.pool.Query(ctx,
-		`SELECT id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
+		`SELECT id, email, password_hash, role, name, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at
 		 FROM users
 		 ORDER BY created_at DESC`,
 	)
@@ -109,7 +109,7 @@ func (q *Querier) ListAllUsers(ctx context.Context) ([]*User, error) {
 	var users []*User
 	for rows.Next() {
 		var u User
-		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Name, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan user row: %w", err)
 		}
 		users = append(users, &u)
@@ -128,9 +128,9 @@ func (q *Querier) UpdateUserAdmin(ctx context.Context, id, role string, enabled 
 		`UPDATE users
 		 SET role = $2, enabled = $3, updated_at = now()
 		 WHERE id = $1
-		 RETURNING id, email, password_hash, role, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
+		 RETURNING id, email, password_hash, role, name, enabled, oauth_providers, instrument_settings, preferences, created_at, updated_at`,
 		id, role, enabled,
-	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
+	).Scan(&u.ID, &u.Email, &u.PasswordHash, &u.Role, &u.Name, &u.Enabled, &u.OAuthProviders, &u.InstrumentSettings, &u.Preferences, &u.CreatedAt, &u.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, nil
