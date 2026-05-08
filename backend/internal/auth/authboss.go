@@ -8,22 +8,23 @@ import (
 	"net/http"
 	"regexp"
 
-	"github.com/adamancini/groovelab/internal/database/queries"
-	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/redis/go-redis/v9"
 	"github.com/aarondl/authboss/v3"
 	_ "github.com/aarondl/authboss/v3/auth"
 	"github.com/aarondl/authboss/v3/defaults"
 	_ "github.com/aarondl/authboss/v3/logout"
 	_ "github.com/aarondl/authboss/v3/register"
 	"github.com/aarondl/authboss/v3/remember"
+	"github.com/adamancini/groovelab/internal/database/queries"
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 // compile-time interface assertions
 var (
-	_ authboss.User         = (*ABUser)(nil)
-	_ authboss.AuthableUser = (*ABUser)(nil)
+	_ authboss.User          = (*ABUser)(nil)
+	_ authboss.AuthableUser  = (*ABUser)(nil)
+	_ authboss.ArbitraryUser = (*ABUser)(nil)
 
 	_ authboss.ServerStorer            = (*PostgresStorer)(nil)
 	_ authboss.CreatingServerStorer    = (*PostgresStorer)(nil)
@@ -32,7 +33,8 @@ var (
 
 // ABUser bridges the queries.User type with the Authboss User interfaces.
 type ABUser struct {
-	DBUser *queries.User
+	DBUser    *queries.User
+	arbitrary map[string]string
 }
 
 // GetPID returns the user's primary identifier (email).
@@ -67,6 +69,19 @@ func (u *ABUser) PutPassword(hash string) {
 	u.DBUser.PasswordHash = &hash
 }
 
+// GetArbitrary returns all arbitrary data stored during registration.
+func (u *ABUser) GetArbitrary() map[string]string {
+	if u.arbitrary == nil {
+		return map[string]string{}
+	}
+	return u.arbitrary
+}
+
+// PutArbitrary stores arbitrary data (e.g., name from registration form).
+func (u *ABUser) PutArbitrary(arbitrary map[string]string) {
+	u.arbitrary = arbitrary
+}
+
 // PostgresStorer implements Authboss server storage backed by PostgreSQL.
 type PostgresStorer struct {
 	q *queries.Querier
@@ -86,7 +101,7 @@ func (s *PostgresStorer) Load(ctx context.Context, key string) (authboss.User, e
 	if u == nil {
 		return nil, authboss.ErrUserNotFound
 	}
-	return &ABUser{DBUser: u}, nil
+	return &ABUser{DBUser: u, arbitrary: make(map[string]string)}, nil
 }
 
 // Save persists a user to the database.
@@ -114,7 +129,7 @@ func (s *PostgresStorer) Save(ctx context.Context, user authboss.User) error {
 		preferences = json.RawMessage("{}")
 	}
 
-	_, err := s.q.UpdateUser(ctx, abu.DBUser.ID, abu.DBUser.Email, ph, abu.DBUser.Role,
+	_, err := s.q.UpdateUser(ctx, abu.DBUser.ID, abu.DBUser.Email, ph, abu.DBUser.Role, abu.DBUser.Name,
 		oauthProviders, instrumentSettings, preferences)
 	if err != nil {
 		return fmt.Errorf("save user: %w", err)
@@ -124,7 +139,7 @@ func (s *PostgresStorer) Save(ctx context.Context, user authboss.User) error {
 
 // New creates a blank user for Authboss to populate.
 func (s *PostgresStorer) New(_ context.Context) authboss.User {
-	return &ABUser{DBUser: &queries.User{}}
+	return &ABUser{DBUser: &queries.User{}, arbitrary: make(map[string]string)}
 }
 
 // Create inserts a new user. The first user in the database gets the admin role.
@@ -146,7 +161,15 @@ func (s *PostgresStorer) Create(ctx context.Context, user authboss.User) error {
 		ph = *abu.DBUser.PasswordHash
 	}
 
-	created, err := s.q.CreateUser(ctx, abu.DBUser.Email, ph, role)
+	// Extract optional name from arbitrary registration data.
+	var name *string
+	if arb := abu.GetArbitrary(); arb != nil {
+		if n, ok := arb["name"]; ok && n != "" {
+			name = &n
+		}
+	}
+
+	created, err := s.q.CreateUser(ctx, abu.DBUser.Email, ph, role, name)
 	if err != nil {
 		return fmt.Errorf("create user: %w", err)
 	}
@@ -251,7 +274,7 @@ func Setup(cfg Config) (*Auth, error) {
 		},
 		Confirms: map[string][]string{},
 		Whitelist: map[string][]string{
-			"register": {"email", "password"},
+			"register": {"email", "password", "name"},
 		},
 	}
 
@@ -305,10 +328,18 @@ func (a *Auth) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := map[string]string{
-		"id":    abu.DBUser.ID,
-		"email": abu.DBUser.Email,
-		"role":  abu.DBUser.Role,
+	resp := struct {
+		ID      string  `json:"id"`
+		Email   string  `json:"email"`
+		Name    *string `json:"name"`
+		Role    string  `json:"role"`
+		IsAdmin bool    `json:"isAdmin"`
+	}{
+		ID:      abu.DBUser.ID,
+		Email:   abu.DBUser.Email,
+		Name:    abu.DBUser.Name,
+		Role:    abu.DBUser.Role,
+		IsAdmin: abu.DBUser.Role == "admin",
 	}
 
 	w.Header().Set("Content-Type", "application/json")

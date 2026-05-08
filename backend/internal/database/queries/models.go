@@ -13,6 +13,7 @@ type User struct {
 	Email              string          `json:"email"`
 	PasswordHash       *string         `json:"-"`
 	Role               string          `json:"role"`
+	Name               *string         `json:"name"`
 	Enabled            bool            `json:"enabled"`
 	OAuthProviders     json.RawMessage `json:"oauth_providers"`
 	InstrumentSettings json.RawMessage `json:"instrument_settings"`
