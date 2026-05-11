@@ -11,7 +11,7 @@ spec:
     # needs to be a valid semver so `replicated lint` passes; keep it in
     # sync with Chart.yaml on `main` to minimise noise in diffs. CI owns
     # the authoritative rewrite. See chart/README.md "Version invariant".
-    chartVersion: 0.1.1
+    chartVersion: 0.1.3
   releaseName: groovelab
   namespace: groovelab
   useHelmInstallOperator: true
