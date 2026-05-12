@@ -79,7 +79,7 @@ jobs:
             type=registry,ref=${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:buildcache,mode=max,image-manifest=true,oci-mediatypes=true
 
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@v4.1.2
 
       - name: Sign ${{ matrix.service }} image
         run: |
@@ -173,7 +173,7 @@ jobs:
       # disk so the dep-update is a no-op (~10-30s saved per run when
       # Chart.lock is unchanged).
       - name: Cache helm chart deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: chart/charts
           key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
