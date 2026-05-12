@@ -612,11 +612,9 @@ jobs:
     # GHA `if:` expressions don't support regex; contains-based negation is
     # sufficient since SemVer prerelease uses `-` and build-metadata uses `+`.
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') && !contains(github.ref_name, '+')
-    # Manual gate: requires approval via GitHub Environment protection rules.
-    # Configure "production" environment in repo Settings > Environments with
-    # required reviewers. The email notification for Stable promotion is
-    # configured in the Replicated Vendor Portal (Settings > Notifications).
-    environment: production
+    # Auto-promote to Stable after CMX install + upgrade tests pass.
+    # The preceding jobs (build-sign-collect, release-unstable, release-unstable-test)
+    # gate this implicitly. If those fail, this job never runs.
     env:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
       VERSION: ${{ needs.build-sign-collect.outputs.version }}
