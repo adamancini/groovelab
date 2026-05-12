@@ -18,6 +18,10 @@ metadata:
   name: groovelab
 spec:
   version: 2.17.0+k8s-1.34
+  # Stable channel uses proxy.xyyzx.net as the custom proxy registry domain.
+  # This must match the custom domain configured in the Replicated Vendor Portal.
+  domains:
+    proxyRegistryDomain: proxy.xyyzx.net
   roles:
     controller:
       name: controller
