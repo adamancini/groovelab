@@ -125,7 +125,7 @@ crdCheck:
   # and ships kubectl + busybox shell. Documented in chart/README.md.
   image:
     repository: alpine/k8s
-    tag: "1.32.3"
+    tag: "1.36.0"
     pullPolicy: IfNotPresent
   # Required CRDs to wait for. Add subchart CRDs here as the chart grows.
   crds:
