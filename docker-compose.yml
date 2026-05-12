@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: groovelab
       POSTGRES_PASSWORD: groovelab
@@ -14,7 +14,7 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:8-alpine
     ports:
       - "6379:6379"
     healthcheck:
@@ -24,7 +24,7 @@ services:
       retries: 10
 
   migrate:
-    image: golang:1.25-alpine
+    image: golang:1.26-alpine
     working_dir: /app
     volumes:
       - ./backend:/app
