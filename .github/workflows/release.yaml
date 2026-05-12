@@ -44,8 +44,8 @@ jobs:
       - name: Compute version from tag
         id: meta
         run: |
-          # Extract version from tag (e.g., v1.2.3 -> v1.2.3)
-          VERSION="${GITHUB_REF_NAME}"
+          # Strip leading 'v' from git tag to get pure SemVer.
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Release version: ${VERSION}"
 
@@ -137,7 +137,7 @@ jobs:
       - name: Compute version from tag
         id: meta
         run: |
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Release version: ${VERSION}"
 
