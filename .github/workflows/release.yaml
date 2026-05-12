@@ -214,31 +214,38 @@ jobs:
         uses: ./.github/actions/setup-replicated-cli
 
       - name: Sync Chart.yaml version to tag
-        # Rewrites chart/Chart.yaml so `version` matches the tag without its
-        # leading `v` (Helm SemVer requirement) and `appVersion` matches the
-        # raw tag (which is also the GHCR image tag). Templates fall back to
-        # .Chart.AppVersion when image.<side>.tag is empty, so this single
+        # Rewrites chart/Chart.yaml so `version` and `appVersion` both carry
+        # the pure SemVer (e.g. 0.1.0) — no leading `v`. Templates fall back
+        # to .Chart.AppVersion when image.<side>.tag is empty, so this single
         # rewrite wires the entire chart to the just-built images.
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-          CHART_VERSION="${VERSION#v}"           # e.g. 0.1.0 (Helm SemVer)
-          APP_VERSION="${VERSION}"               # e.g. v0.1.0 (matches GHCR image tag)
-          yq -i ".version = \"${CHART_VERSION}\"" chart/Chart.yaml
-          yq -i ".appVersion = \"${APP_VERSION}\"" chart/Chart.yaml
+          yq -i ".version = \"${VERSION}\"" chart/Chart.yaml
+          yq -i ".appVersion = \"${VERSION}\"" chart/Chart.yaml
           echo "Chart.yaml synced:"
           grep -E "^(version|appVersion):" chart/Chart.yaml
+
+      - name: Pin image tags in values.yaml
+        # Explicitly pin image tags so the chart is self-describing —
+        # `helm show values` tells you exactly which images will be deployed.
+        env:
+          VERSION: ${{ env.VERSION }}
+        run: |
+          yq -i ".image.frontend.tag = \"${VERSION}\"" chart/values.yaml
+          yq -i ".image.backend.tag = \"${VERSION}\"" chart/values.yaml
+          echo "Image tags pinned:"
+          grep -E "^\s+tag:" chart/values.yaml
 
       - name: Sync release/helmchart.yaml chartVersion to tag
         # release/helmchart.yaml is a KOTS HelmChart CR whose
         # .spec.chart.chartVersion must match the packaged chart's semver
         # (chart/Chart.yaml.version). If this drifts, KOTS cannot resolve
-        # the chart inside the release. Same rewrite pattern as Chart.yaml.
+        # the chart inside the release.
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-          CHART_VERSION="${VERSION#v}"
-          yq -i ".spec.chart.chartVersion = \"${CHART_VERSION}\"" release/helmchart.yaml
+          yq -i ".spec.chart.chartVersion = \"${VERSION}\"" release/helmchart.yaml
           echo "release/helmchart.yaml synced:"
           grep -E "chartVersion:" release/helmchart.yaml
 
