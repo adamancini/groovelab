@@ -543,8 +543,11 @@ jobs:
       #   3. strip anything not [a-z0-9-], collapse runs of '-'
       #   4. trim leading/trailing '-'
       #   5. if length > 36: truncate to 28, append '-<sha7>' of original name
-      # CHART_VERSION is 0.0.0-pr<N> — pre-release SemVer so it sorts below
-      # any real stable release and cannot accidentally promote past Beta.
+      #
+      # CHART_VERSION is based on the current Chart.yaml version + short SHA
+      # so it is deterministic per-commit and naturally sorts below the next
+      # stable release. The HelmChart CR (release/helmchart.yaml) is synced
+      # to match so Replicated can resolve the chart at release-create time.
       #
       # HEAD_REF is attacker-controlled; pass via env and quote in shell to
       # avoid workflow command injection.
@@ -565,14 +568,36 @@ jobs:
           if [ -z "$SLUG" ]; then
             SLUG="pr-${PR_NUMBER}"
           fi
-          CHART_VERSION="0.0.0-pr${PR_NUMBER}"
+          BASE_VERSION=$(yq -r '.version' chart/Chart.yaml)
+          SHORT_SHA="${GITHUB_SHA::7}"
+          CHART_VERSION="${BASE_VERSION}-${SHORT_SHA}"
           echo "slug=${SLUG}" >> "$GITHUB_OUTPUT"
           echo "chart_version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
           echo "Branch:        ${BRANCH}"
           echo "Slug:          ${SLUG}  (length ${#SLUG})"
           echo "Chart version: ${CHART_VERSION}"
 
-      # Step 2 — Package the chart into release/ so `replicated release create
+      # Step 2 — Sync chart version files so Replicated can resolve the chart.
+      # Mirrors release.yaml. Without this the HelmChart CR chartVersion drifts
+      # from the packaged chart version and `replicated release create` fails
+      # with "does not have a matching HelmChart custom resource".
+      - name: Sync Chart.yaml version
+        env:
+          CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
+        run: |
+          yq -i ".version = \"${CHART_VERSION}\"" chart/Chart.yaml
+          echo "Chart.yaml version synced:"
+          grep -E "^version:" chart/Chart.yaml
+
+      - name: Sync release/helmchart.yaml chartVersion
+        env:
+          CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
+        run: |
+          yq -i ".spec.chart.chartVersion = \"${CHART_VERSION}\"" release/helmchart.yaml
+          echo "release/helmchart.yaml chartVersion synced:"
+          grep -E "chartVersion:" release/helmchart.yaml
+
+      # Step 3 — Package the chart into release/ so `replicated release create
       # --yaml-dir release/` picks up the tgz rather than the raw chart/ tree.
       - name: Package chart
         env:
@@ -1113,8 +1138,9 @@ jobs:
           SLUG: ${{ steps.slug.outputs.slug }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           NAMESPACE: ${{ steps.cluster.outputs.namespace }}
+          CHART_VERSION: ${{ steps.slug.outputs.chart_version }}
         run: |
-          UPGRADE_VERSION="0.0.0-pr${PR_NUMBER}.1"
+          UPGRADE_VERSION="${CHART_VERSION}.1"
           rm -f release/groovelab-*.tgz
           # Same appVersion contract as the install Package step:
           # appVersion must match the GHCR tag the build job pushed.
@@ -1126,6 +1152,10 @@ jobs:
             --app-version "$IMAGE_TAG" \
             --destination /tmp/
           mv "/tmp/groovelab-${UPGRADE_VERSION}.tgz" release/
+
+          # Sync HelmChart CR chartVersion for the upgrade release so
+          # Replicated can resolve the bumped chart.
+          yq -i ".spec.chart.chartVersion = \"${UPGRADE_VERSION}\"" release/helmchart.yaml
 
           replicated release create \
             --yaml-dir release/ \
