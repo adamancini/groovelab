@@ -625,6 +625,9 @@ jobs:
         id: job_start
         run: echo "epoch=$(date +%s)" >> "$GITHUB_OUTPUT"
 
+      - name: Checkout
+        uses: actions/checkout@v4
+
       # GRO-mf1d: pinned, deduplicated install via local composite action
       # (.github/actions/setup-replicated-cli). The previous inline pattern
       # called api.github.com/.../releases/latest, which was rate-limited and
