@@ -2,5 +2,21 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "postUpdateOptions": [
+    "gomodTidyWork"
+  ],
+  "packageRules": [
+    {
+      "description": "Group all Go module updates in a single PR to maintain go.work consistency",
+      "matchManagers": ["gomod"],
+      "groupName": "Go modules",
+      "matchFileNames": [
+        "go.work",
+        "go.work.sum",
+        "backend/go.mod",
+        "tests/e2e/go.mod"
+      ]
+    }
   ]
 }
