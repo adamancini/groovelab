@@ -54,7 +54,7 @@ jobs:
 
       - name: Filter changed paths
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v4
         with:
           # Negated patterns + `predicate-quantifier: every`: a file matches
           # only when it satisfies ALL negations (i.e., is NOT in any of the
