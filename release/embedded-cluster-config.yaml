@@ -22,6 +22,7 @@ spec:
   # This must match the custom domain configured in the Replicated Vendor Portal.
   domains:
     proxyRegistryDomain: proxy.xyyzx.net
+    replicatedAppDomain: app.xyyzx.net
   roles:
     controller:
       name: controller
