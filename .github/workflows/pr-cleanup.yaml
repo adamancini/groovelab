@@ -38,7 +38,7 @@ jobs:
     steps:
       # Need the repo on disk to source scripts/replicated-slug.sh.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # GRO-mf1d: pinned, deduplicated install via local composite action
       # (.github/actions/setup-replicated-cli). The previous inline pattern
