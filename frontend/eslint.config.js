@@ -19,6 +19,13 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
+      // GRO-5z3n: react-hooks v7 (via Renovate) added React Compiler rules
+      // (globals, immutability, set-state-in-effect) that flag existing test
+      // patterns and component code. Disable for now; re-enable after codebase
+      // is refactored to comply with React 19 purity rules.
+      'react-hooks/globals': 'off',
+      'react-hooks/immutability': 'off',
+      'react-hooks/set-state-in-effect': 'off',
       'react-refresh/only-export-components': [
         'warn',
         { allowConstantExport: true },
