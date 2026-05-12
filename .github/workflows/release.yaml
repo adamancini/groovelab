@@ -44,8 +44,9 @@ jobs:
       - name: Compute version from tag
         id: meta
         run: |
-          # Extract version from tag (e.g., v1.2.3 -> v1.2.3)
-          VERSION="${GITHUB_REF_NAME}"
+          # Strip leading 'v' from git tag to get pure SemVer.
+          # Tags are v0.1.0; images and chart versions are 0.1.0.
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Release version: ${VERSION}"
 
@@ -125,7 +126,7 @@ jobs:
   # `needs.build-sign.outputs.*`. The collector depends on both matrix legs
   # (so it only runs when both succeed) and re-emits the workflow-scoped
   # `version` output that downstream `release-unstable` and `promote-stable`
-  # consume. Version is just GITHUB_REF_NAME (the pushed tag), so we
+  # consume. Version is GITHUB_REF_NAME with the leading 'v' stripped, so we
   # recompute deterministically here.
   build-sign-collect:
     name: Collect build-sign outputs
@@ -137,7 +138,7 @@ jobs:
       - name: Compute version from tag
         id: meta
         run: |
-          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "Release version: ${VERSION}"
 
@@ -214,18 +215,15 @@ jobs:
         uses: ./.github/actions/setup-replicated-cli
 
       - name: Sync Chart.yaml version to tag
-        # Rewrites chart/Chart.yaml so `version` matches the tag without its
-        # leading `v` (Helm SemVer requirement) and `appVersion` matches the
-        # raw tag (which is also the GHCR image tag). Templates fall back to
-        # .Chart.AppVersion when image.<side>.tag is empty, so this single
+        # Rewrites chart/Chart.yaml so `version` and `appVersion` both carry
+        # the pure SemVer (e.g. 0.1.0) — no leading `v`. Templates fall back
+        # to .Chart.AppVersion when image.<side>.tag is empty, so this single
         # rewrite wires the entire chart to the just-built images.
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-          CHART_VERSION="${VERSION#v}"           # e.g. 0.1.0 (Helm SemVer)
-          APP_VERSION="${VERSION}"               # e.g. v0.1.0 (matches GHCR image tag)
-          yq -i ".version = \"${CHART_VERSION}\"" chart/Chart.yaml
-          yq -i ".appVersion = \"${APP_VERSION}\"" chart/Chart.yaml
+          yq -i ".version = \"${VERSION}\"" chart/Chart.yaml
+          yq -i ".appVersion = \"${VERSION}\"" chart/Chart.yaml
           echo "Chart.yaml synced:"
           grep -E "^(version|appVersion):" chart/Chart.yaml
 
@@ -233,12 +231,11 @@ jobs:
         # release/helmchart.yaml is a KOTS HelmChart CR whose
         # .spec.chart.chartVersion must match the packaged chart's semver
         # (chart/Chart.yaml.version). If this drifts, KOTS cannot resolve
-        # the chart inside the release. Same rewrite pattern as Chart.yaml.
+        # the chart inside the release.
         env:
           VERSION: ${{ env.VERSION }}
         run: |
-          CHART_VERSION="${VERSION#v}"
-          yq -i ".spec.chart.chartVersion = \"${CHART_VERSION}\"" release/helmchart.yaml
+          yq -i ".spec.chart.chartVersion = \"${VERSION}\"" release/helmchart.yaml
           echo "release/helmchart.yaml synced:"
           grep -E "chartVersion:" release/helmchart.yaml
 
@@ -260,12 +257,11 @@ jobs:
           # GRO-uqtg: chart deps are resolved once in the upstream "Resolve
           # chart dependencies" step. No need to re-run `helm dependency
           # update` here.
-          CHART_VERSION="${VERSION#v}"
           helm package chart/ \
             --destination release/ \
-            --version "${CHART_VERSION}" \
+            --version "${VERSION}" \
             --app-version "${VERSION}"
-          CHART_TGZ="release/groovelab-${CHART_VERSION}.tgz"
+          CHART_TGZ="release/groovelab-${VERSION}.tgz"
           echo "chart_tgz=${CHART_TGZ}" >> "$GITHUB_OUTPUT"
           echo "Packaged: ${CHART_TGZ}"
           echo "Verifying helpers and NOTES preserved in packaged chart..."

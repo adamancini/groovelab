@@ -5,7 +5,7 @@
 # drift between `make release-unstable` and the tag-triggered release job.
 #
 # Convention (per CLAUDE.md "Non-Negotiables"): pass env vars AFTER the
-# command, e.g. `make release-unstable VERSION=v0.1.1`, never before.
+# command, e.g. `make release-unstable VERSION=0.1.1`, never before.
 #
 # Fixes GRO-kydk: `replicated release create --yaml-dir chart/` silently
 # strips `.tpl` files (helpers, NOTES), producing uninstallable releases.
@@ -216,7 +216,7 @@ release-unstable: ## Alias for `make release CHANNEL=Unstable` (back-compat)
 
 _require-version:
 	@if [ -z "$${VERSION:-}" ]; then \
-		echo "ERROR: VERSION is required, e.g. make release-unstable VERSION=v0.1.1"; \
+		echo "ERROR: VERSION is required, e.g. make release-unstable VERSION=0.1.1"; \
 		exit 2; \
 	fi
 

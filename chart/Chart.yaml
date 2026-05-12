@@ -3,12 +3,13 @@ name: groovelab
 description: Browser-based music theory learning and practice application for bassists
 type: application
 version: 0.1.3
-# appVersion carries the "v" prefix to match the GHCR image tag the Release
-# workflow pushes. Templates use `.Values.image.<side>.tag | default .Chart.AppVersion`,
-# so this is the source of truth for the deployed image. CI rewrites both
-# `version` and `appVersion` in-place from ${GITHUB_REF_NAME} before
-# `replicated release create`; see chart/README.md for the invariant.
-appVersion: "v0.1.3"
+# appVersion matches the GHCR image tag the Release workflow pushes.
+# Tags are pure SemVer (e.g. 0.1.0) — no leading "v". Templates use
+# `.Values.image.<side>.tag | default .Chart.AppVersion`, so this is the
+# source of truth for the deployed image. CI rewrites both `version` and
+# `appVersion` in-place from ${GITHUB_REF_NAME} before `replicated release
+# create`; see chart/README.md for the invariant.
+appVersion: "0.1.3"
 dependencies:
   - name: cloudnative-pg
     version: "0.28.2"

@@ -27,14 +27,14 @@ image:
   frontend:
     repository: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-frontend
     # tag is empty by default; templates fall back to .Chart.AppVersion (which
-    # CI rewrites from the git tag at release time, e.g. v0.1.0). Local
+    # CI rewrites from the git tag at release time, e.g. 0.1.0). Local
     # overrides via --set image.frontend.tag=dev-local still work.
     tag: ""
     pullPolicy: IfNotPresent
   backend:
     repository: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-backend
     # tag is empty by default; templates fall back to .Chart.AppVersion (which
-    # CI rewrites from the git tag at release time, e.g. v0.1.0). Local
+    # CI rewrites from the git tag at release time, e.g. 0.1.0). Local
     # overrides via --set image.backend.tag=dev-local still work.
     tag: ""
     pullPolicy: IfNotPresent

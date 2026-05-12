@@ -12,13 +12,11 @@ chart to pull the image whose tag equals `.Chart.AppVersion`.
 
 Conventions:
 
-- `Chart.yaml.version` is pure [SemVer](https://semver.org/) (e.g. `0.1.0`),
-  bumped by CI to `${GITHUB_REF_NAME#v}` at release time. Helm rejects chart
-  versions with a leading `v`.
-- `Chart.yaml.appVersion` carries the `v` prefix (e.g. `v0.1.0`). This value
-  matches the GHCR image tag that CI pushed for the release, which is
-  `${GITHUB_REF_NAME}` verbatim (e.g. tag `v0.1.0` produces
-  `ghcr.io/adamancini/groovelab-{frontend,backend}:v0.1.0`).
+- Both `Chart.yaml.version` and `Chart.yaml.appVersion` are pure
+  [SemVer](https://semver.org/) (e.g. `0.1.0`) with no leading `v`. Git tags
+  are `v0.1.0` but CI strips the prefix at the start of the workflow, so every
+  downstream reference (chart version, app version, and GHCR image tag) uses
+  the same bare SemVer.
 - `values.yaml` leaves `image.frontend.tag` and `image.backend.tag` as empty
   strings (`""`). Templates fall back to `.Chart.AppVersion`.
 - Local developer overrides (`--set image.backend.tag=dev-abc123`) still work
@@ -34,10 +32,8 @@ The `release-unstable` job in `.github/workflows/release.yaml` rewrites
   env:
     VERSION: ${{ env.VERSION }}
   run: |
-    CHART_VERSION="${VERSION#v}"
-    APP_VERSION="${VERSION}"
-    yq -i ".version = \"${CHART_VERSION}\"" chart/Chart.yaml
-    yq -i ".appVersion = \"${APP_VERSION}\"" chart/Chart.yaml
+    yq -i ".version = \"${VERSION}\"" chart/Chart.yaml
+    yq -i ".appVersion = \"${VERSION}\"" chart/Chart.yaml
 ```
 
 This keeps the chart checked into git in a runnable state (local
@@ -57,11 +53,10 @@ CI rewrites this file too, in the step right after Chart.yaml sync:
   env:
     VERSION: ${{ env.VERSION }}
   run: |
-    CHART_VERSION="${VERSION#v}"
-    yq -i ".spec.chart.chartVersion = \"${CHART_VERSION}\"" release/helmchart.yaml
+    yq -i ".spec.chart.chartVersion = \"${VERSION}\"" release/helmchart.yaml
 ```
 
-The local `make release-unstable VERSION=vX.Y.Z` target performs the same
+The local `make release-unstable VERSION=X.Y.Z` target performs the same
 three-file rewrite (`chart/Chart.yaml.version`, `chart/Chart.yaml.appVersion`,
 `release/helmchart.yaml.spec.chart.chartVersion`) before packaging, so
 developers cutting a release locally produce the same artifact shape as CI.
