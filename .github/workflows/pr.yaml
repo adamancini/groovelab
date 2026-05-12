@@ -266,7 +266,7 @@ jobs:
       # helm dependency update below is a no-op on cache hit (tarballs already
       # present + matching Chart.lock), so cache-hit skips subchart re-fetch.
       - name: Cache helm chart deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: chart/charts
           key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
@@ -495,7 +495,7 @@ jobs:
       # the dep-update is effectively a no-op (~10-30s saved per run when
       # Chart.lock is unchanged). Per-runner-OS prefix matches helm-lint.
       - name: Cache helm chart deps
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: chart/charts
           key: helm-deps-${{ runner.os }}-${{ hashFiles('chart/Chart.lock') }}
