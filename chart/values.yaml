@@ -59,9 +59,6 @@ securityContext:
       type: RuntimeDefault
   container:
     allowPrivilegeEscalation: false
-    capabilities:
-      drop:
-        - ALL
     readOnlyRootFilesystem: false
 
 # resources — resource requests and limits for all containers.

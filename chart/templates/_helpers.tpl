@@ -73,8 +73,8 @@ NOTE: runAsNonRoot is intentionally omitted. The container images (nginx,
 Go binary, redis/valkey) do not declare a non-root USER in their Dockerfile.
 With runAsNonRoot: true, Kubernetes rejects pods because the effective user
 is root (uid 0). OpenShift SCCs handle non-root enforcement via random UID
-assignment, and the container-level protections (drop ALL capabilities,
-readOnlyRootFilesystem, noPrivilegeEscalation) provide defense in depth.
+assignment. Container-level protections (allowPrivilegeEscalation: false,
+readOnlyRootFilesystem) provide defense in depth.
 */}}
 {{- define "groovelab.podSecurityContext" -}}
 seccompProfile:
@@ -87,9 +87,6 @@ Usage: {{ include "groovelab.containerSecurityContext" . | nindent 12 }}
 */}}
 {{- define "groovelab.containerSecurityContext" -}}
 allowPrivilegeEscalation: {{ .Values.securityContext.container.allowPrivilegeEscalation }}
-capabilities:
-  drop:
-    - ALL
 readOnlyRootFilesystem: {{ .Values.securityContext.container.readOnlyRootFilesystem }}
 {{- end -}}
 
