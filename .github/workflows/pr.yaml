@@ -339,8 +339,12 @@ jobs:
   build-sign:
     name: Build, Push, and Sign (${{ matrix.service }})
     runs-on: ubuntu-latest
-    # GRO-6gq2: gate on all three parallel test jobs (was: lint-test).
-    needs: [detect-changes, go-test, node-test, helm-lint]
+    # GRO-6gq2: start in parallel with test jobs to save wall-clock.
+    # Previously gated on go-test/node-test/helm-lint, but Docker builds are
+    # independent of test results and are the long pole. cmx-test still waits
+    # for both build-sign and all three test jobs, so the final quality gate
+    # is preserved.
+    needs: [detect-changes]
     if: needs.detect-changes.outputs.code == 'true'
     permissions:
       contents: read
@@ -499,7 +503,10 @@ jobs:
     # GRO-fuxa: consume image-tag from build-sign-collect aggregator (matrix
     # job outputs aren't directly addressable). build-sign itself is also
     # listed so cmx-test still gates on both matrix legs succeeding.
-    needs: [detect-changes, build-sign, build-sign-collect]
+    # go-test/node-test/helm-lint are explicitly listed because build-sign
+    # now runs in parallel with them — the final quality gate must still
+    # require all three test jobs to pass before deploying to CMX.
+    needs: [detect-changes, go-test, node-test, helm-lint, build-sign, build-sign-collect]
     if: needs.detect-changes.outputs.code == 'true'
     env:
       REPLICATED_API_TOKEN: ${{ secrets.REPLICATED_API_TOKEN }}
