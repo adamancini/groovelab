@@ -144,6 +144,14 @@ jobs:
         # inter-test ordering bugs without materially slowing the suite.
         run: go test -p 4 -shuffle=on ./...
 
+      # GRO-g29f: govulncheck scans Go dependencies for known vulnerabilities.
+      # Fails on critical/high CVEs to block vulnerable code from merging.
+      - name: govulncheck
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
       # GRO-qrdt: per-job wall-clock timing summary.
       - name: Job timing summary
         if: always()
@@ -209,6 +217,12 @@ jobs:
       - name: npm test
         working-directory: frontend
         run: npm run test
+
+      # GRO-g29f: npm audit scans npm dependencies for known vulnerabilities.
+      # Fails on moderate+ severity to block vulnerable packages from merging.
+      - name: npm audit
+        working-directory: frontend
+        run: npm audit --audit-level moderate
 
       # GRO-qrdt: per-job wall-clock timing summary.
       - name: Job timing summary
@@ -388,6 +402,18 @@ jobs:
         run: |
           cosign sign --yes \
             "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}@${{ steps.build.outputs.digest }}"
+
+      # GRO-g29f: Trivy scans the built image for HIGH/CRITICAL CVEs.
+      # Fails the build if vulnerabilities are found, preventing vulnerable
+      # images from reaching the registry.
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '1'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.service }}.sarif'
 
       # GRO-qrdt: per-job wall-clock timing summary (per matrix leg).
       - name: Job timing summary

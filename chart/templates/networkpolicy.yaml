@@ -1,0 +1,38 @@
+{{- if .Values.airgap.networkPolicy.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "groovelab.fullname" . }}-airgap
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/part-of: groovelab
+  policyTypes:
+    - Egress
+  egress:
+    # Allow intra-namespace communication (app pods talking to each other)
+    - to:
+        - podSelector: {}
+    # Allow DNS resolution (required for service discovery)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow communication with CNPG operator and other operators in their namespaces
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cert-manager
+{{- end }}
