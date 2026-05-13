@@ -62,7 +62,7 @@ securityContext:
     capabilities:
       drop:
         - ALL
-    readOnlyRootFilesystem: true
+    readOnlyRootFilesystem: false
 
 # resources — resource requests and limits for all containers.
 # CPU limits are intentionally omitted per Robusta best-practice guidance
