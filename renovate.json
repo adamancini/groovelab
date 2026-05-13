@@ -23,16 +23,14 @@
       "matchManagers": ["npm"],
       "matchFileNames": ["frontend/package.json", "frontend/package-lock.json"],
       "groupName": "Vite & Vitest",
-      "matchPackageNames": ["vite", "vitest"],
-      "matchPackagePatterns": ["^@vitejs/", "^@vitest/"]
+      "matchPackageNames": ["vite", "vitest", "/^@vitejs//", "/^@vitest//"]
     },
     {
       "description": "Group ESLint toolchain to avoid peer dep mismatches on major bumps",
       "matchManagers": ["npm"],
       "matchFileNames": ["frontend/package.json", "frontend/package-lock.json"],
       "groupName": "ESLint toolchain",
-      "matchPackageNames": ["eslint", "@eslint/js", "globals"],
-      "matchPackagePatterns": ["^eslint-plugin-"]
+      "matchPackageNames": ["eslint", "@eslint/js", "globals", "/^eslint-plugin-/"]
     }
   ]
 }
