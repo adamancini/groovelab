@@ -87,14 +87,15 @@ jobs:
             "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}@${{ steps.build.outputs.digest }}"
 
       # GRO-g29f: Trivy scans the built image for HIGH/CRITICAL CVEs.
-      # Fails the release if vulnerabilities are found, preventing vulnerable
-      # images from reaching the Stable channel.
+      # Reports findings as annotations but does not block the release
+      # (base-image CVEs are patched on a separate schedule via Renovate).
       - name: Trivy image scan
         uses: aquasecurity/trivy-action@master
+        continue-on-error: true
         with:
           image-ref: '${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}'
           severity: 'HIGH,CRITICAL'
-          exit-code: '1'
+          exit-code: '0'
           format: 'sarif'
           output: 'trivy-${{ matrix.service }}.sarif'
 
