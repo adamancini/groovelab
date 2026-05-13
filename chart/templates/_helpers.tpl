@@ -66,6 +66,49 @@ Usage:
 {{- end -}}
 
 {{/*
+Pod-level security context (PodSecurityContext).
+Usage: {{ include "groovelab.podSecurityContext" . | nindent 8 }}
+
+NOTE: runAsNonRoot is intentionally omitted. The container images (nginx,
+Go binary, redis/valkey) do not declare a non-root USER in their Dockerfile.
+With runAsNonRoot: true, Kubernetes rejects pods because the effective user
+is root (uid 0). OpenShift SCCs handle non-root enforcement via random UID
+assignment. Container-level protections (allowPrivilegeEscalation: false,
+readOnlyRootFilesystem) provide defense in depth.
+*/}}
+{{- define "groovelab.podSecurityContext" -}}
+seccompProfile:
+  type: {{ .Values.securityContext.pod.seccompProfile.type }}
+{{- end -}}
+
+{{/*
+Container-level security context (SecurityContext).
+Usage: {{ include "groovelab.containerSecurityContext" . | nindent 12 }}
+*/}}
+{{- define "groovelab.containerSecurityContext" -}}
+allowPrivilegeEscalation: {{ .Values.securityContext.container.allowPrivilegeEscalation }}
+readOnlyRootFilesystem: {{ .Values.securityContext.container.readOnlyRootFilesystem }}
+{{- end -}}
+
+{{/*
+Standard emptyDir volumes needed when readOnlyRootFilesystem is true.
+Usage: {{ include "groovelab.emptyDirVolumes" . | nindent 8 }}
+*/}}
+{{- define "groovelab.emptyDirVolumes" -}}
+- name: tmp
+  emptyDir: {}
+{{- end -}}
+
+{{/*
+Standard volume mounts for emptyDir volumes.
+Usage: {{ include "groovelab.emptyDirVolumeMounts" . | nindent 12 }}
+*/}}
+{{- define "groovelab.emptyDirVolumeMounts" -}}
+- name: tmp
+  mountPath: /tmp
+{{- end -}}
+
+{{/*
 Image pull secrets — merges global.imagePullSecrets, images.pullSecrets,
 and the SDK-managed enterprise-pull-secret when dockerconfigjson is present.
 */}}

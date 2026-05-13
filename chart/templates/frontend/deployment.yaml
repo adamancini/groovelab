@@ -8,7 +8,7 @@ metadata:
     app.kubernetes.io/component: frontend
     app.kubernetes.io/part-of: groovelab
 spec:
-  replicas: 1
+  replicas: {{ .Values.appReplicas.frontend }}
   selector:
     matchLabels:
       {{- include "groovelab.selectorLabels" . | nindent 6 }}
@@ -21,10 +21,14 @@ spec:
         app.kubernetes.io/part-of: groovelab
     spec:
       {{- include "groovelab.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- include "groovelab.podSecurityContext" . | nindent 8 }}
       containers:
         - name: frontend
           image: '{{ include "groovelab.imageRef" (dict "registry" .Values.image.frontend.registry "repository" .Values.image.frontend.repository "tag" (.Values.image.frontend.tag | default .Chart.AppVersion)) }}'
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
+          securityContext:
+            {{- include "groovelab.containerSecurityContext" . | nindent 12 }}
           ports:
             - name: http
               containerPort: 8080
@@ -41,11 +45,23 @@ spec:
               port: 8080
             initialDelaySeconds: 5
             periodSeconds: 10
+          resources:
+            {{- toYaml .Values.resources.frontend | nindent 12 }}
           volumeMounts:
             - name: nginx-config
               mountPath: /etc/nginx/conf.d/default.conf
               subPath: default.conf
+            {{- include "groovelab.emptyDirVolumeMounts" . | nindent 12 }}
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            - name: nginx-run
+              mountPath: /var/run
       volumes:
         - name: nginx-config
           configMap:
             name: {{ include "groovelab.fullname" . }}-nginx-config
+        {{- include "groovelab.emptyDirVolumes" . | nindent 8 }}
+        - name: nginx-cache
+          emptyDir: {}
+        - name: nginx-run
+          emptyDir: {}
