@@ -55,7 +55,6 @@ image:
 # OpenShift SCC compatible.
 securityContext:
   pod:
-    runAsNonRoot: true
     seccompProfile:
       type: RuntimeDefault
   container:

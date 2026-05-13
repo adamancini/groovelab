@@ -68,9 +68,15 @@ Usage:
 {{/*
 Pod-level security context (PodSecurityContext).
 Usage: {{ include "groovelab.podSecurityContext" . | nindent 8 }}
+
+NOTE: runAsNonRoot is intentionally omitted. The container images (nginx,
+Go binary, redis/valkey) do not declare a non-root USER in their Dockerfile.
+With runAsNonRoot: true, Kubernetes rejects pods because the effective user
+is root (uid 0). OpenShift SCCs handle non-root enforcement via random UID
+assignment, and the container-level protections (drop ALL capabilities,
+readOnlyRootFilesystem, noPrivilegeEscalation) provide defense in depth.
 */}}
 {{- define "groovelab.podSecurityContext" -}}
-runAsNonRoot: {{ .Values.securityContext.pod.runAsNonRoot }}
 seccompProfile:
   type: {{ .Values.securityContext.pod.seccompProfile.type }}
 {{- end -}}
