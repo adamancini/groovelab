@@ -49,6 +49,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+Construct a fully-qualified container image reference from registry,
+repository, and tag. If registry is empty, returns repository:tag.
+Usage:
+  {{ include "groovelab.imageRef" (dict "registry" .Values.image.frontend.registry "repository" .Values.image.frontend.repository "tag" (.Values.image.frontend.tag | default .Chart.AppVersion)) }}
+*/}}
+{{- define "groovelab.imageRef" -}}
+{{- $registry := .registry | default "" -}}
+{{- $repository := .repository -}}
+{{- $tag := .tag -}}
+{{- if $registry -}}
+{{- printf "%s/%s:%s" $registry $repository $tag -}}
+{{- else -}}
+{{- printf "%s:%s" $repository $tag -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Image pull secrets — merges global.imagePullSecrets, images.pullSecrets,
 and the SDK-managed enterprise-pull-secret when dockerconfigjson is present.
 */}}

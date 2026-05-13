@@ -23,7 +23,7 @@ spec:
       {{- include "groovelab.imagePullSecrets" . | nindent 6 }}
       initContainers:
         - name: wait-for-db
-          image: busybox:latest
+          image: '{{ include "groovelab.imageRef" (dict "registry" .Values.initContainers.waitForDb.image.registry "repository" .Values.initContainers.waitForDb.image.repository "tag" .Values.initContainers.waitForDb.image.tag) }}'
           command:
             - sh
             - -c
@@ -39,7 +39,7 @@ spec:
             - name: DB_PORT
               value: "5432"
         - name: db-migrate
-          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag | default .Chart.AppVersion }}"
+          image: '{{ include "groovelab.imageRef" (dict "registry" .Values.image.backend.registry "repository" .Values.image.backend.repository "tag" (.Values.image.backend.tag | default .Chart.AppVersion)) }}'
           imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
           command:
             - /server
@@ -61,7 +61,7 @@ spec:
               value: {{ .Values.cnpg.database | default "groovelab" | quote }}
       containers:
         - name: backend
-          image: "{{ .Values.image.backend.repository }}:{{ .Values.image.backend.tag | default .Chart.AppVersion }}"
+          image: '{{ include "groovelab.imageRef" (dict "registry" .Values.image.backend.registry "repository" .Values.image.backend.repository "tag" (.Values.image.backend.tag | default .Chart.AppVersion)) }}'
           imagePullPolicy: {{ .Values.image.backend.pullPolicy }}
           ports:
             - name: http

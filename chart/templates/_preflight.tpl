@@ -13,7 +13,7 @@ spec:
     {{- if not (index .Values "cloudnative-pg" "enabled") }}
     - run:
         collectorName: "db-connectivity"
-        image: postgres:16-alpine
+        image: '{{ include "groovelab.imageRef" (dict "registry" .Values.preflight.images.postgres.registry "repository" .Values.preflight.images.postgres.repository "tag" .Values.preflight.images.postgres.tag) }}'
         command: ["pg_isready"]
         args:
           - "-h"
@@ -28,7 +28,7 @@ spec:
     {{- end }}
     - run:
         collectorName: "external-endpoint"
-        image: busybox:1.36
+        image: '{{ include "groovelab.imageRef" (dict "registry" .Values.preflight.images.busybox.registry "repository" .Values.preflight.images.busybox.repository "tag" .Values.preflight.images.busybox.tag) }}'
         command: ["nc"]
         args:
           - "-zv"

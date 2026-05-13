@@ -25,14 +25,16 @@ images:
 
 image:
   frontend:
-    repository: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-frontend
+    registry: ""
+    repository: adamancini/groovelab-frontend
     # tag is empty by default; templates fall back to .Chart.AppVersion (which
     # CI rewrites from the git tag at release time, e.g. v0.1.0). Local
     # overrides via --set image.frontend.tag=dev-local still work.
     tag: ""
     pullPolicy: IfNotPresent
   backend:
-    repository: proxy.xyyzx.net/proxy/groovelab/ghcr.io/adamancini/groovelab-backend
+    registry: ""
+    repository: adamancini/groovelab-backend
     # tag is empty by default; templates fall back to .Chart.AppVersion (which
     # CI rewrites from the git tag at release time, e.g. v0.1.0). Local
     # overrides via --set image.backend.tag=dev-local still work.
@@ -81,6 +83,7 @@ externalDatabase:
 valkey:
   enabled: true
   image:
+    registry: ""
     repository: valkey/valkey
     tag: "9"
   storage:
@@ -124,6 +127,7 @@ crdCheck:
   # `alpine/k8s` is first-party (alpinelinux org, not bitnami), multi-arch,
   # and ships kubectl + busybox shell. Documented in chart/README.md.
   image:
+    registry: ""
     repository: alpine/k8s
     tag: "1.36.0"
     pullPolicy: IfNotPresent
@@ -139,3 +143,24 @@ crdCheck:
     limits:
       cpu: 100m
       memory: 64Mi
+
+# initContainers — images used by init containers in workload pods.
+initContainers:
+  waitForDb:
+    image:
+      registry: ""
+      repository: busybox
+      tag: "latest"
+
+# preflight — images used by preflight collectors.
+# These run as ephemeral pods before the main application is deployed.
+preflight:
+  images:
+    postgres:
+      registry: ""
+      repository: postgres
+      tag: "16-alpine"
+    busybox:
+      registry: ""
+      repository: busybox
+      tag: "1.36"
