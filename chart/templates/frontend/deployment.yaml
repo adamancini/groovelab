@@ -23,7 +23,7 @@ spec:
       {{- include "groovelab.imagePullSecrets" . | nindent 6 }}
       containers:
         - name: frontend
-          image: "{{ .Values.image.frontend.repository }}:{{ .Values.image.frontend.tag | default .Chart.AppVersion }}"
+          image: '{{ include "groovelab.imageRef" (dict "registry" .Values.image.frontend.registry "repository" .Values.image.frontend.repository "tag" (.Values.image.frontend.tag | default .Chart.AppVersion)) }}'
           imagePullPolicy: {{ .Values.image.frontend.pullPolicy }}
           ports:
             - name: http

@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
         - name: valkey
-          image: "{{ .Values.valkey.image.repository }}:{{ .Values.valkey.image.tag }}"
+          image: '{{ include "groovelab.imageRef" (dict "registry" .Values.valkey.image.registry "repository" .Values.valkey.image.repository "tag" .Values.valkey.image.tag) }}'
           ports:
             - containerPort: 6379
               protocol: TCP

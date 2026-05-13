@@ -8,6 +8,8 @@ spec:
   statusInformers:
     - deployment/groovelab-frontend
     - deployment/groovelab-backend
+    - deployment/groovelab-valkey
+    - deployment/groovelab-sdk
     - statefulset/groovelab-postgresql
   ports:
     - serviceName: groovelab-frontend

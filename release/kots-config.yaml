@@ -1,0 +1,27 @@
+apiVersion: kots.io/v1beta1
+kind: Config
+metadata:
+  name: groovelab
+spec:
+  groups:
+    - name: database
+      title: Database
+      description: PostgreSQL database configuration
+      items:
+        - name: cnpg_password
+          type: password
+          title: CNPG Password
+          help_text: Password for the CloudNativePG cluster. Generated automatically on first install.
+          hidden: true
+          value: '{{repl RandomString 20}}'
+    - name: features
+      title: Features
+      description: Application feature toggles
+      items:
+        - name: track_export_enabled
+          type: bool
+          title: Enable Track Export
+          help_text: Allow users to export practice tracks. Controlled by license entitlement.
+          default: "0"
+          readonly: true
+          when: '{{repl ne (LicenseFieldValue "track_export_enabled") ""}}'
