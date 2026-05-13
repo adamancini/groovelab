@@ -2,7 +2,13 @@ Groovelab has been deployed!
 
 Access the application:
 {{- if .Values.ingress.enabled }}
+  {{- if eq .Values.tls.mode "self-signed" }}
+  https://{{ (index .Values.ingress.hosts 0).host }} (self-signed certificate — accept the browser warning)
+  {{- else if eq .Values.tls.mode "manual" }}
+  https://{{ (index .Values.ingress.hosts 0).host }} (custom certificate)
+  {{- else }}
   https://{{ (index .Values.ingress.hosts 0).host }}
+  {{- end }}
 {{- else if eq .Values.service.type "LoadBalancer" }}
   Run: kubectl get svc --namespace {{ .Release.Namespace }} {{ include "groovelab.fullname" . }}
 {{- else }}

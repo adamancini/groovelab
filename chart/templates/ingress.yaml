@@ -1,0 +1,43 @@
+{{- if .Values.ingress.enabled -}}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "groovelab.fullname" . }}
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+    {{- if and (eq .Values.tls.mode "auto") .Values.tls.certManager.issuerName }}
+    cert-manager.io/cluster-issuer: {{ .Values.tls.certManager.issuerName }}
+    {{- end }}
+spec:
+  {{- if .Values.ingress.className }}
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- end }}
+  {{- if or (eq .Values.tls.mode "manual") (eq .Values.tls.mode "self-signed") (eq .Values.tls.mode "auto") }}
+  tls:
+    - hosts:
+        {{- range .Values.ingress.hosts }}
+        - {{ .host | quote }}
+        {{- end }}
+      secretName: {{ include "groovelab.fullname" . }}-tls
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ include "groovelab.fullname" . }}-frontend
+                port:
+                  number: 8080
+          {{- end }}
+    {{- end }}
+{{- end }}
