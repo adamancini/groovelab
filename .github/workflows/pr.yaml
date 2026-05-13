@@ -626,16 +626,24 @@ jobs:
           echo "release/helmchart.yaml chartVersion synced:"
           grep -E "chartVersion:" release/helmchart.yaml
 
-      - name: Pin image tags in values.yaml
-        # Explicitly pin image tags so the chart is self-describing —
+      - name: Pin image registry, repository, and tag in values.yaml
+        # Explicitly pin image coordinates so the chart is self-describing —
         # `helm show values` tells you exactly which images will be deployed.
+        # Registry + repository are set to the Replicated proxy path because
+        # this is the customer-grade OCI install path (Replicated injects
+        # dockerconfigjson auth; the proxy forwards to GHCR). C4 split these
+        # out of the default values.yaml, so CI must pin them at package time.
         env:
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
+          yq -i ".image.frontend.registry = \"proxy.xyyzx.net\"" chart/values.yaml
+          yq -i ".image.frontend.repository = \"proxy/groovelab/ghcr.io/adamancini/groovelab-frontend\"" chart/values.yaml
           yq -i ".image.frontend.tag = \"${IMAGE_TAG}\"" chart/values.yaml
+          yq -i ".image.backend.registry = \"proxy.xyyzx.net\"" chart/values.yaml
+          yq -i ".image.backend.repository = \"proxy/groovelab/ghcr.io/adamancini/groovelab-backend\"" chart/values.yaml
           yq -i ".image.backend.tag = \"${IMAGE_TAG}\"" chart/values.yaml
-          echo "Image tags pinned:"
-          grep -E "^\s+tag:" chart/values.yaml
+          echo "Image coordinates pinned:"
+          grep -E "^\s+(registry|repository|tag):" chart/values.yaml
 
       # Step 3 — Package the chart into release/ so `replicated release create
       # --yaml-dir release/` picks up the tgz rather than the raw chart/ tree.
