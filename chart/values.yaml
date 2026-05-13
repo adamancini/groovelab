@@ -23,6 +23,14 @@ global:
 images:
   pullSecrets: []
 
+# appReplicas — number of pod replicas for each stateless Deployment.
+# Valkey is stateful (PVC per pod) and should stay at 1 unless running
+# in sentinel/replication mode, but the value is exposed for consistency.
+appReplicas:
+  frontend: 1
+  backend: 1
+  valkey: 1
+
 image:
   frontend:
     registry: ""
@@ -40,6 +48,64 @@ image:
     # overrides via --set image.backend.tag=dev-local still work.
     tag: ""
     pullPolicy: IfNotPresent
+
+# securityContext — PodSecurityContext (pod-level) and SecurityContext
+# (container-level) defaults for all workloads. Follows the Pod Security
+# Standards restricted profile. No explicit runAsUser/runAsGroup to keep
+# OpenShift SCC compatible.
+securityContext:
+  pod:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  container:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+# resources — resource requests and limits for all containers.
+# CPU limits are intentionally omitted per Robusta best-practice guidance
+# (https://home.robusta.dev/blog/stop-using-cpu-limits).
+resources:
+  frontend:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+  backend:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  valkey:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  initContainers:
+    waitForDb:
+      requests:
+        cpu: 10m
+        memory: 32Mi
+      limits:
+        memory: 64Mi
+    dbMigrate:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        memory: 256Mi
+  crdCheck:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
 
 service:
   type: ClusterIP

@@ -9,7 +9,7 @@ metadata:
     app.kubernetes.io/component: valkey
     app.kubernetes.io/part-of: groovelab
 spec:
-  replicas: 1
+  replicas: {{ .Values.appReplicas.valkey }}
   selector:
     matchLabels:
       {{- include "groovelab.selectorLabels" . | nindent 6 }}
@@ -21,17 +21,25 @@ spec:
         app.kubernetes.io/component: valkey
         app.kubernetes.io/part-of: groovelab
     spec:
+      securityContext:
+        {{- include "groovelab.podSecurityContext" . | nindent 8 }}
       containers:
         - name: valkey
           image: '{{ include "groovelab.imageRef" (dict "registry" .Values.valkey.image.registry "repository" .Values.valkey.image.repository "tag" .Values.valkey.image.tag) }}'
+          securityContext:
+            {{- include "groovelab.containerSecurityContext" . | nindent 12 }}
           ports:
             - containerPort: 6379
               protocol: TCP
+          resources:
+            {{- toYaml .Values.resources.valkey | nindent 12 }}
           volumeMounts:
             - name: data
               mountPath: /data
+            {{- include "groovelab.emptyDirVolumeMounts" . | nindent 12 }}
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: {{ include "groovelab.fullname" . }}-valkey-data
+        {{- include "groovelab.emptyDirVolumes" . | nindent 8 }}
 {{- end }}

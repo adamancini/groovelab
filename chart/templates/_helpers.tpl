@@ -66,6 +66,46 @@ Usage:
 {{- end -}}
 
 {{/*
+Pod-level security context (PodSecurityContext).
+Usage: {{ include "groovelab.podSecurityContext" . | nindent 8 }}
+*/}}
+{{- define "groovelab.podSecurityContext" -}}
+runAsNonRoot: {{ .Values.securityContext.pod.runAsNonRoot }}
+seccompProfile:
+  type: {{ .Values.securityContext.pod.seccompProfile.type }}
+{{- end -}}
+
+{{/*
+Container-level security context (SecurityContext).
+Usage: {{ include "groovelab.containerSecurityContext" . | nindent 12 }}
+*/}}
+{{- define "groovelab.containerSecurityContext" -}}
+allowPrivilegeEscalation: {{ .Values.securityContext.container.allowPrivilegeEscalation }}
+capabilities:
+  drop:
+    - ALL
+readOnlyRootFilesystem: {{ .Values.securityContext.container.readOnlyRootFilesystem }}
+{{- end -}}
+
+{{/*
+Standard emptyDir volumes needed when readOnlyRootFilesystem is true.
+Usage: {{ include "groovelab.emptyDirVolumes" . | nindent 8 }}
+*/}}
+{{- define "groovelab.emptyDirVolumes" -}}
+- name: tmp
+  emptyDir: {}
+{{- end -}}
+
+{{/*
+Standard volume mounts for emptyDir volumes.
+Usage: {{ include "groovelab.emptyDirVolumeMounts" . | nindent 12 }}
+*/}}
+{{- define "groovelab.emptyDirVolumeMounts" -}}
+- name: tmp
+  mountPath: /tmp
+{{- end -}}
+
+{{/*
 Image pull secrets — merges global.imagePullSecrets, images.pullSecrets,
 and the SDK-managed enterprise-pull-secret when dockerconfigjson is present.
 */}}
