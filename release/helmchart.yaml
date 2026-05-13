@@ -93,9 +93,6 @@ spec:
         repository: library/replicated-sdk-image
         tag: "1.19.4"
   values:
-    features:
-      trackExport:
-        enabled: '{{repl LicenseFieldValue "track_export_enabled"}}'
     # C1: CNPG password generated once by KOTS Config CR and passed through.
     cnpg:
       password: 'repl{{ ConfigOption "cnpg_password" }}'
@@ -158,10 +155,3 @@ spec:
       image:
         registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "proxy.replicated.com" }}'
         repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/library/replicated-sdk-image" LocalRegistryNamespace) "library/replicated-sdk-image" }}'
-  optionalValues:
-    - when: '{{repl ne (LicenseFieldValue "track_export_enabled") ""}}'
-      recursiveMerge: true
-      values:
-        features:
-          trackExport:
-            enabled: '{{repl LicenseFieldValue "track_export_enabled"}}'
