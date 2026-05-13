@@ -626,6 +626,17 @@ jobs:
           echo "release/helmchart.yaml chartVersion synced:"
           grep -E "chartVersion:" release/helmchart.yaml
 
+      - name: Pin image tags in values.yaml
+        # Explicitly pin image tags so the chart is self-describing —
+        # `helm show values` tells you exactly which images will be deployed.
+        env:
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+        run: |
+          yq -i ".image.frontend.tag = \"${IMAGE_TAG}\"" chart/values.yaml
+          yq -i ".image.backend.tag = \"${IMAGE_TAG}\"" chart/values.yaml
+          echo "Image tags pinned:"
+          grep -E "^\s+tag:" chart/values.yaml
+
       # Step 3 — Package the chart into release/ so `replicated release create
       # --yaml-dir release/` picks up the tgz rather than the raw chart/ tree.
       - name: Package chart
