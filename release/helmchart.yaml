@@ -11,17 +11,153 @@ spec:
     # needs to be a valid semver so `replicated lint` passes; keep it in
     # sync with Chart.yaml on `main` to minimise noise in diffs. CI owns
     # the authoritative rewrite. See chart/README.md "Version invariant".
-    chartVersion: 0.1.3
+    chartVersion: 0.1.10
   releaseName: groovelab
   namespace: groovelab
   useHelmInstallOperator: true
   helmUpgradeFlags:
     - --atomic
     - --timeout=300s
+  # spec.builder mirrors the values tree with hardcoded upstream image
+  # references so KOTS can discover and bundle every image for air-gap.
+  # No template functions — only static registry/repository/tag values.
+  builder:
+    image:
+      frontend:
+        registry: proxy.xyyzx.net
+        repository: proxy/groovelab/ghcr.io/adamancini/groovelab-frontend
+        tag: "0.1.10"
+      backend:
+        registry: proxy.xyyzx.net
+        repository: proxy/groovelab/ghcr.io/adamancini/groovelab-backend
+        tag: "0.1.10"
+    valkey:
+      image:
+        registry: ""
+        repository: valkey/valkey
+        tag: "9"
+    crdCheck:
+      image:
+        registry: ""
+        repository: alpine/k8s
+        tag: "1.36.0"
+    initContainers:
+      waitForDb:
+        image:
+          registry: ""
+          repository: busybox
+          tag: "latest"
+    preflight:
+      images:
+        postgres:
+          registry: ""
+          repository: postgres
+          tag: "16-alpine"
+        busybox:
+          registry: ""
+          repository: busybox
+          tag: "1.36"
+    cloudnative-pg:
+      image:
+        registry: ghcr.io
+        repository: cloudnative-pg/cloudnative-pg
+        tag: "1.29.1"
+    cert-manager:
+      image:
+        registry: quay.io
+        repository: jetstack/cert-manager-controller
+        tag: "v1.19.5"
+      webhook:
+        image:
+          registry: quay.io
+          repository: jetstack/cert-manager-webhook
+          tag: "v1.19.5"
+      cainjector:
+        image:
+          registry: quay.io
+          repository: jetstack/cert-manager-cainjector
+          tag: "v1.19.5"
+      acmesolver:
+        image:
+          registry: quay.io
+          repository: jetstack/cert-manager-acmesolver
+          tag: "v1.19.5"
+      startupapicheck:
+        image:
+          registry: quay.io
+          repository: jetstack/cert-manager-startupapicheck
+          tag: "v1.19.5"
+    replicated:
+      image:
+        registry: proxy.replicated.com
+        repository: library/replicated-sdk-image
+        tag: "1.19.4"
   values:
     features:
       trackExport:
         enabled: '{{repl LicenseFieldValue "track_export_enabled"}}'
+    # C1: CNPG password generated once by KOTS Config CR and passed through.
+    cnpg:
+      password: 'repl{{ ConfigOption "cnpg_password" }}'
+    # C3+C4: Air-gap image rewriting. All registry/repository pairs use
+    # HasLocalRegistry ternaries so air-gap installs pull from the customer's
+    # local registry instead of the upstream (proxy, Docker Hub, GHCR, Quay).
+    image:
+      frontend:
+        registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "proxy.xyyzx.net" }}'
+        repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/proxy/groovelab/ghcr.io/adamancini/groovelab-frontend" LocalRegistryNamespace) "proxy/groovelab/ghcr.io/adamancini/groovelab-frontend" }}'
+      backend:
+        registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "proxy.xyyzx.net" }}'
+        repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/proxy/groovelab/ghcr.io/adamancini/groovelab-backend" LocalRegistryNamespace) "proxy/groovelab/ghcr.io/adamancini/groovelab-backend" }}'
+    valkey:
+      image:
+        registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "" }}'
+        repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/valkey/valkey" LocalRegistryNamespace) "valkey/valkey" }}'
+    crdCheck:
+      image:
+        registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "" }}'
+        repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/alpine/k8s" LocalRegistryNamespace) "alpine/k8s" }}'
+    initContainers:
+      waitForDb:
+        image:
+          registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "" }}'
+          repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/busybox" LocalRegistryNamespace) "busybox" }}'
+    preflight:
+      images:
+        postgres:
+          registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "" }}'
+          repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/postgres" LocalRegistryNamespace) "postgres" }}'
+        busybox:
+          registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "" }}'
+          repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/busybox" LocalRegistryNamespace) "busybox" }}'
+    cloudnative-pg:
+      image:
+        registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "ghcr.io" }}'
+        repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/cloudnative-pg/cloudnative-pg" LocalRegistryNamespace) "cloudnative-pg/cloudnative-pg" }}'
+    cert-manager:
+      image:
+        registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "quay.io" }}'
+        repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/jetstack/cert-manager-controller" LocalRegistryNamespace) "jetstack/cert-manager-controller" }}'
+      webhook:
+        image:
+          registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "quay.io" }}'
+          repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/jetstack/cert-manager-webhook" LocalRegistryNamespace) "jetstack/cert-manager-webhook" }}'
+      cainjector:
+        image:
+          registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "quay.io" }}'
+          repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/jetstack/cert-manager-cainjector" LocalRegistryNamespace) "jetstack/cert-manager-cainjector" }}'
+      acmesolver:
+        image:
+          registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "quay.io" }}'
+          repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/jetstack/cert-manager-acmesolver" LocalRegistryNamespace) "jetstack/cert-manager-acmesolver" }}'
+      startupapicheck:
+        image:
+          registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "quay.io" }}'
+          repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/jetstack/cert-manager-startupapicheck" LocalRegistryNamespace) "jetstack/cert-manager-startupapicheck" }}'
+    replicated:
+      image:
+        registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "proxy.replicated.com" }}'
+        repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/library/replicated-sdk-image" LocalRegistryNamespace) "library/replicated-sdk-image" }}'
   optionalValues:
     - when: '{{repl ne (LicenseFieldValue "track_export_enabled") ""}}'
       recursiveMerge: true

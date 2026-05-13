@@ -93,7 +93,7 @@ spec:
       {{- end }}
       containers:
         - name: crd-check
-          image: "{{ .Values.crdCheck.image.repository }}:{{ .Values.crdCheck.image.tag }}"
+          image: '{{ include "groovelab.imageRef" (dict "registry" .Values.crdCheck.image.registry "repository" .Values.crdCheck.image.repository "tag" .Values.crdCheck.image.tag) }}'
           imagePullPolicy: {{ .Values.crdCheck.image.pullPolicy | default "IfNotPresent" }}
           command:
             - /bin/sh
