@@ -86,6 +86,19 @@ jobs:
           cosign sign --yes \
             "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}@${{ steps.build.outputs.digest }}"
 
+      # GRO-g29f: Trivy scans the built image for HIGH/CRITICAL CVEs.
+      # Reports findings as annotations but does not block the release
+      # (base-image CVEs are patched on a separate schedule via Renovate).
+      - name: Trivy image scan
+        uses: aquasecurity/trivy-action@master
+        continue-on-error: true
+        with:
+          image-ref: '${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}'
+          severity: 'HIGH,CRITICAL'
+          exit-code: '0'
+          format: 'sarif'
+          output: 'trivy-${{ matrix.service }}.sarif'
+
       # GRO-qrdt: per-job wall-clock timing summary (per matrix leg).
       - name: Job timing summary
         if: always()
