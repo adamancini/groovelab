@@ -1,0 +1,26 @@
+toc:
+  - group: Installation
+    items:
+      - title: Helm Install
+        file: helm-install.md
+        description: Install Groovelab on an existing Kubernetes cluster using Helm
+      - title: Embedded Cluster Install
+        file: ec-install.md
+        description: Install Groovelab as a self-contained Embedded Cluster on a VM or bare-metal
+      - title: Upgrade Guide
+        file: upgrade.md
+        description: Upgrade Groovelab via Helm or KOTS Admin Console
+
+  - group: Security
+    items:
+      - title: CVE Posture
+        file: cve-posture.md
+        description: Vulnerability scanning, base image choices, and security practices
+
+  - group: Helm Chart Reference
+    items:
+      - title: Values Reference
+        file: ../chart/values.yaml
+        description: Auto-generated Helm values reference (see values.yaml for inline docs)
+        # Note: at least one intentionally undocumented field exists in values.yaml
+        # to demonstrate the hidden-values feature of the Enterprise Portal

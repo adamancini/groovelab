@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 60" width="200" height="60">
+  <rect width="200" height="60" fill="#1a1a2e" rx="8"/>
+  <text x="20" y="38" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="#e94560">Groovelab</text>
+  <rect x="155" y="15" width="30" height="30" fill="#e94560" rx="4"/>
+  <text x="160" y="36" font-family="Arial, sans-serif" font-size="18" fill="#1a1a2e">B</text>
+</svg>
