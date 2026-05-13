@@ -91,8 +91,11 @@ spec:
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
-      securityContext:
-        {{- include "groovelab.podSecurityContext" . | nindent 8 }}
+      # NOTE: pod-level runAsNonRoot is intentionally omitted for this hook Job.
+      # The alpine/k8s image does not declare a non-root USER, so runAsNonRoot
+      # would cause the pod to be rejected. Container-level protections
+      # (drop ALL capabilities, readOnlyRootFilesystem, noPrivilegeEscalation)
+      # are still applied.
       containers:
         - name: crd-check
           image: '{{ include "groovelab.imageRef" (dict "registry" .Values.crdCheck.image.registry "repository" .Values.crdCheck.image.repository "tag" .Values.crdCheck.image.tag) }}'
