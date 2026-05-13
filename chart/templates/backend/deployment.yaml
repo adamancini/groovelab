@@ -39,11 +39,9 @@ spec:
               echo "Database is ready."
           resources:
             {{- toYaml .Values.resources.initContainers.waitForDb | nindent 12 }}
-          env:
-            - name: DB_HOST
-              value: "{{ include "groovelab.fullname" . }}-postgresql-rw"
-            - name: DB_PORT
-              value: "5432"
+          envFrom:
+            - configMapRef:
+                name: {{ include "groovelab.fullname" . }}-backend-env
           volumeMounts:
             {{- include "groovelab.emptyDirVolumeMounts" . | nindent 12 }}
         - name: db-migrate
@@ -57,20 +55,15 @@ spec:
             - /migrations
           resources:
             {{- toYaml .Values.resources.initContainers.dbMigrate | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "groovelab.fullname" . }}-backend-env
           env:
-            - name: DB_HOST
-              value: "{{ include "groovelab.fullname" . }}-postgresql-rw"
-            - name: DB_PORT
-              value: "5432"
-            - name: DATABASE_USER
-              value: {{ .Values.cnpg.owner | default "groovelab" | quote }}
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "groovelab.fullname" . }}-cnpg-credentials
                   key: password
-            - name: DATABASE_NAME
-              value: {{ .Values.cnpg.database | default "groovelab" | quote }}
           volumeMounts:
             {{- include "groovelab.emptyDirVolumeMounts" . | nindent 12 }}
       containers:
@@ -97,26 +90,15 @@ spec:
             periodSeconds: 10
           resources:
             {{- toYaml .Values.resources.backend | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "groovelab.fullname" . }}-backend-env
           env:
-            - name: DB_HOST
-              value: "{{ include "groovelab.fullname" . }}-postgresql-rw"
-            - name: DB_PORT
-              value: "5432"
-            - name: DATABASE_USER
-              value: {{ .Values.cnpg.owner | default "groovelab" | quote }}
             - name: DATABASE_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ include "groovelab.fullname" . }}-cnpg-credentials
                   key: password
-            - name: DATABASE_NAME
-              value: {{ .Values.cnpg.database | default "groovelab" | quote }}
-            - name: REDIS_HOST
-              value: "{{ include "groovelab.fullname" . }}-valkey"
-            - name: REDIS_PORT
-              value: "6379"
-            - name: APP_VERSION
-              value: {{ .Chart.AppVersion | default "0.1.0" | quote }}
           volumeMounts:
             {{- include "groovelab.emptyDirVolumeMounts" . | nindent 12 }}
       volumes:
