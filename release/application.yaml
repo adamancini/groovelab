@@ -5,10 +5,6 @@ metadata:
 spec:
   title: Groovelab
   icon: https://raw.githubusercontent.com/adamancini/groovelab/main/assets/icon.png
-  branding:
-    primaryColor: "#e94560"
-    secondaryColor: "#1a1a2e"
-    logo: https://raw.githubusercontent.com/adamancini/groovelab/main/assets/logo.svg
   statusInformers:
     - deployment/groovelab-frontend
     - deployment/groovelab-backend
