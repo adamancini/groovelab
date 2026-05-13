@@ -10,7 +10,10 @@ spec:
     - deployment/groovelab-backend
     - deployment/groovelab-valkey
     - deployment/groovelab-sdk
-    - statefulset/groovelab-postgresql
+    # Conditional: only watch the CNPG StatefulSet when using embedded PostgreSQL.
+    # When external_db_enabled is set to 1, the CNPG Cluster is not rendered
+    # (cnpg.createCluster: false) and the StatefulSet does not exist.
+    - '{{repl if not (ConfigOptionEquals "external_db_enabled" "1")}}statefulset/groovelab-postgresql{{repl end}}'
   ports:
     - serviceName: groovelab-frontend
       servicePort: 443

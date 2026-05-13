@@ -8,12 +8,22 @@ spec:
       title: Database
       description: PostgreSQL database configuration
       items:
+        - name: external_db_enabled
+          type: bool
+          title: Use External PostgreSQL
+          help_text: >
+            Enable to use an external PostgreSQL database instead of the
+            embedded CloudNativePG cluster. When enabled, you must provide
+            connection details (host, port, username, password) and the CNPG
+            StatefulSet will not be created.
+          default: "0"
         - name: cnpg_password
           type: password
           title: CNPG Password
           help_text: Password for the CloudNativePG cluster. Generated automatically on first install.
           hidden: true
           value: '{{repl RandomString 20}}'
+          when: '{{repl not (ConfigOptionEquals "external_db_enabled" "1")}}'
     - name: features
       title: Features
       description: Application feature toggles

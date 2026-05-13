@@ -46,7 +46,7 @@ spec:
         image:
           registry: ""
           repository: busybox
-          tag: "latest"
+          tag: "1.36.1"
     preflight:
       images:
         postgres:
@@ -95,6 +95,8 @@ spec:
   values:
     # C1: CNPG password generated once by KOTS Config CR and passed through.
     cnpg:
+      # When external_db_enabled is true, do not render the CNPG Cluster CR.
+      createCluster: '{{repl if ConfigOptionEquals "external_db_enabled" "1"}}false{{repl else}}true{{repl end}}'
       password: 'repl{{ ConfigOption "cnpg_password" }}'
     # C3+C4: Air-gap image rewriting. All registry/repository pairs use
     # HasLocalRegistry ternaries so air-gap installs pull from the customer's
