@@ -406,8 +406,14 @@ jobs:
 
       - name: Sign ${{ matrix.service }} image
         run: |
+          # Sign by the PR tag (not digest) so downstream `cosign verify ${REF}`
+          # can resolve the tag directly. GHCR + cosign tag→digest lookup is
+          # unreliable for ephemeral PR tags (manifest-list vs single-platform
+          # digest mismatch, propagation delay). Signing by tag is acceptable
+          # here because the tag is short-lived and the build+push+sign is
+          # atomic in the same job.
           cosign sign --yes \
-            "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}@${{ steps.build.outputs.digest }}"
+            "${{ env.GHCR_PREFIX }}/groovelab-${{ matrix.service }}:${{ steps.meta.outputs.tag }}"
 
       # GRO-g29f: Trivy scans the built image for HIGH/CRITICAL CVEs.
       # Reports findings as annotations but does not block the build
