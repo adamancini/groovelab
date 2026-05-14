@@ -2,37 +2,292 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "imagePullSecrets": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "images": {
+      "type": "object",
+      "properties": {
+        "pullSecrets": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "appReplicas": {
+      "type": "object",
+      "properties": {
+        "frontend": { "type": "integer", "minimum": 1 },
+        "backend": { "type": "integer", "minimum": 1 },
+        "valkey": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "frontend": {
+          "type": "object",
+          "properties": {
+            "registry": { "type": "string" },
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["IfNotPresent", "Always", "Never"] }
+          }
+        },
+        "backend": {
+          "type": "object",
+          "properties": {
+            "registry": { "type": "string" },
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["IfNotPresent", "Always", "Never"] }
+          }
+        }
+      }
+    },
+    "securityContext": {
+      "type": "object",
+      "properties": {
+        "pod": {
+          "type": "object",
+          "properties": {
+            "seccompProfile": {
+              "type": "object",
+              "properties": {
+                "type": { "type": "string", "enum": ["RuntimeDefault", "Localhost", "Unconfined"] }
+              }
+            }
+          }
+        },
+        "container": {
+          "type": "object",
+          "properties": {
+            "allowPrivilegeEscalation": { "type": "boolean" },
+            "readOnlyRootFilesystem": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "properties": {
+        "frontend": { "$ref": "#/definitions/resourceBlock" },
+        "backend": { "$ref": "#/definitions/resourceBlock" },
+        "valkey": { "$ref": "#/definitions/resourceBlock" },
+        "initContainers": {
+          "type": "object",
+          "properties": {
+            "waitForDb": { "$ref": "#/definitions/resourceBlock" },
+            "dbMigrate": { "$ref": "#/definitions/resourceBlock" }
+          }
+        },
+        "crdCheck": { "$ref": "#/definitions/resourceBlock" }
+      }
+    },
     "service": {
       "type": "object",
       "properties": {
-        "type": {
-          "type": "string",
-          "enum": ["ClusterIP", "NodePort", "LoadBalancer"]
-        }
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "nodePort": { "type": "string" }
       }
     },
     "ingress": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" }
+        "enabled": { "type": "boolean" },
+        "className": { "type": "string" },
+        "annotations": { "type": "object" },
+        "hosts": { "type": "array", "items": { "type": "object" } }
       }
     },
-    "postgresql": {
+    "tls": {
+      "type": "object",
+      "properties": {
+        "mode": { "type": "string", "enum": ["auto", "manual", "self-signed"] },
+        "certManager": {
+          "type": "object",
+          "properties": {
+            "issuerName": { "type": "string" },
+            "issuerKind": { "type": "string", "enum": ["ClusterIssuer", "Issuer"] }
+          }
+        },
+        "cert": { "type": "string" },
+        "key": { "type": "string" }
+      }
+    },
+    "cloudnative-pg": {
       "type": "object",
       "properties": {
         "enabled": { "type": "boolean" }
       }
     },
-    "redis": {
+    "cnpg": {
       "type": "object",
       "properties": {
-        "enabled": { "type": "boolean" }
+        "createCluster": { "type": "boolean" },
+        "instances": { "type": "integer", "minimum": 1 },
+        "database": { "type": "string" },
+        "owner": { "type": "string" },
+        "password": { "type": "string" },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "size": { "type": "string" }
+          }
+        }
+      }
+    },
+    "externalDatabase": {
+      "type": "object",
+      "properties": {
+        "host": { "type": "string" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "database": { "type": "string" },
+        "username": { "type": "string" },
+        "password": { "type": "string" },
+        "existingSecret": { "type": "string" },
+        "sslMode": { "type": "string" }
+      }
+    },
+    "valkey": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "registry": { "type": "string" },
+            "repository": { "type": "string" },
+            "tag": { "type": "string" }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "properties": {
+            "size": { "type": "string" }
+          }
+        }
+      }
+    },
+    "cert-manager": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "installCRDs": { "type": "boolean" }
       }
     },
     "replicated": {
       "type": "object",
       "properties": {
+        "enabled": { "type": "boolean" },
+        "fullnameOverride": { "type": "string" }
+      }
+    },
+    "serviceMonitor": {
+      "type": "object",
+      "properties": {
         "enabled": { "type": "boolean" }
+      }
+    },
+    "podDisruptionBudget": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "airgap": {
+      "type": "object",
+      "properties": {
+        "networkPolicy": {
+          "type": "object",
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "crdCheck": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "image": {
+          "type": "object",
+          "properties": {
+            "registry": { "type": "string" },
+            "repository": { "type": "string" },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["IfNotPresent", "Always", "Never"] }
+          }
+        },
+        "crds": { "type": "array", "items": { "type": "string" } },
+        "timeout": { "type": "integer", "minimum": 1 },
+        "resources": { "$ref": "#/definitions/resourceBlock" }
+      }
+    },
+    "initContainers": {
+      "type": "object",
+      "properties": {
+        "waitForDb": {
+          "type": "object",
+          "properties": {
+            "image": {
+              "type": "object",
+              "properties": {
+                "registry": { "type": "string" },
+                "repository": { "type": "string" },
+                "tag": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "preflight": {
+      "type": "object",
+      "properties": {
+        "images": {
+          "type": "object",
+          "properties": {
+            "postgres": {
+              "type": "object",
+              "properties": {
+                "registry": { "type": "string" },
+                "repository": { "type": "string" },
+                "tag": { "type": "string" }
+              }
+            },
+            "busybox": {
+              "type": "object",
+              "properties": {
+                "registry": { "type": "string" },
+                "repository": { "type": "string" },
+                "tag": { "type": "string" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "resourceBlock": {
+      "type": "object",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "properties": {
+            "cpu": { "type": "string" },
+            "memory": { "type": "string" }
+          }
+        }
       }
     }
   }
