@@ -173,6 +173,12 @@ replicated:
   enabled: true
   fullnameOverride: "groovelab-sdk"
 
+serviceMonitor:
+  enabled: false
+
+podDisruptionBudget:
+  enabled: false
+
 airgap:
   networkPolicy:
     enabled: false
