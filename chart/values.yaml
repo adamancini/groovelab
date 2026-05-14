@@ -228,7 +228,7 @@ initContainers:
       repository: busybox
       # Pinned to specific version for reproducible deployments.
       # See GRO-i12f (M3: Pin busybox init container image).
-      tag: "1.36.1"
+      tag: "1.37.0"
 
 # preflight — images used by preflight collectors.
 # These run as ephemeral pods before the main application is deployed.
