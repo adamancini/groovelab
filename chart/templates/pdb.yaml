@@ -1,0 +1,61 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+{{- $fullname := include "groovelab.fullname" . }}
+{{- $replicasFrontend := int .Values.appReplicas.frontend }}
+{{- $replicasBackend := int .Values.appReplicas.backend }}
+{{- $replicasValkey := int .Values.appReplicas.valkey }}
+
+# Frontend PDB — only rendered when replicas > 1 so that minAvailable: 1
+# does not block single-replica drains.
+{{- if gt $replicasFrontend 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-frontend
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: frontend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "groovelab.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: frontend
+{{- end }}
+
+# Backend PDB — only rendered when replicas > 1.
+{{- if gt $replicasBackend 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-backend
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "groovelab.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: backend
+{{- end }}
+
+# Valkey PDB — only rendered when valkey is enabled and replicas > 1.
+{{- if and .Values.valkey.enabled (gt $replicasValkey 1) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ $fullname }}-valkey
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+    app.kubernetes.io/component: valkey
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- include "groovelab.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: valkey
+{{- end }}
+{{- end }}
