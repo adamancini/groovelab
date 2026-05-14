@@ -133,6 +133,13 @@ spec:
       image:
         registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "ghcr.io" }}'
         repository: 'repl{{ HasLocalRegistry | ternary (printf "%s/cloudnative-pg/cloudnative-pg" LocalRegistryNamespace) "cloudnative-pg/cloudnative-pg" }}'
+    # M4: Three-mode TLS configuration passed from KOTS Config CR.
+    tls:
+      mode: '{{repl ConfigOption "ingress_tls_type"}}'
+      certManager:
+        issuerName: '{{repl ConfigOption "ingress_tls_issuer_name"}}'
+      cert: '{{repl print `|`}}repl{{ ConfigOptionData `ingress_tls_cert` | nindent 12 }}'
+      key: '{{repl print `|`}}repl{{ ConfigOptionData `ingress_tls_key` | nindent 12 }}'
     cert-manager:
       image:
         registry: 'repl{{ HasLocalRegistry | ternary LocalRegistryHost "quay.io" }}'

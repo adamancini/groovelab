@@ -24,6 +24,44 @@ spec:
           hidden: true
           value: '{{repl RandomString 20}}'
           when: '{{repl not (ConfigOptionEquals "external_db_enabled" "1")}}'
+    - name: tls_settings
+      title: TLS / Ingress
+      description: Configure TLS for the Groovelab ingress
+      items:
+        - name: ingress_tls_type
+          type: select_one
+          title: Ingress TLS Type
+          help_text: >
+            Select how TLS will be configured for the Groovelab ingress.
+            Auto: cert-manager will provision a certificate (requires a configured Issuer/ClusterIssuer).
+            Self-Signed: A self-signed certificate will be generated (suitable for testing/air-gap).
+            User Provided: Upload a TLS certificate and key pair.
+          default: self_signed
+          items:
+            - name: self_signed
+              title: Self Signed (Generate Self Signed Certificate)
+            - name: auto
+              title: Auto (cert-manager Certificate)
+            - name: user_provided
+              title: User Provided (Upload a TLS Certificate and Key Pair)
+        - name: ingress_tls_cert
+          type: file
+          title: TLS Certificate
+          help_text: PEM-encoded TLS certificate file.
+          when: '{{repl ConfigOptionEquals "ingress_tls_type" "user_provided"}}'
+          required: true
+        - name: ingress_tls_key
+          type: file
+          title: TLS Private Key
+          help_text: PEM-encoded TLS private key file.
+          when: '{{repl ConfigOptionEquals "ingress_tls_type" "user_provided"}}'
+          required: true
+        - name: ingress_tls_issuer_name
+          type: text
+          title: cert-manager Issuer Name
+          help_text: Name of the cert-manager ClusterIssuer or Issuer to use for automatic certificate provisioning.
+          default: ""
+          when: '{{repl ConfigOptionEquals "ingress_tls_type" "auto"}}'
     - name: features
       title: Features
       description: Application feature toggles

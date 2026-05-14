@@ -1,0 +1,15 @@
+{{- if and .Values.ingress.enabled (eq .Values.tls.mode "manual") }}
+---
+# User-provided TLS certificate and key (uploaded via KOTS Config).
+# Values must be base64-encoded PEM data.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ include "groovelab.fullname" . }}-tls
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ .Values.tls.cert | quote }}
+  tls.key: {{ .Values.tls.key | quote }}
+{{- end }}

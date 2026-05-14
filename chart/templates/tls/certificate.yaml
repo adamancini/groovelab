@@ -1,0 +1,22 @@
+{{- if and .Values.ingress.enabled (eq .Values.tls.mode "auto") }}
+---
+# cert-manager Certificate resource for auto-provisioned TLS.
+# Requires cert-manager (installed via infra chart or pre-existing cluster).
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "groovelab.fullname" . }}-tls
+  labels:
+    {{- include "groovelab.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "groovelab.fullname" . }}-tls
+  {{- with .Values.ingress.hosts }}
+  dnsNames:
+    {{- range . }}
+    - {{ .host | quote }}
+    {{- end }}
+  {{- end }}
+  issuerRef:
+    name: {{ .Values.tls.certManager.issuerName }}
+    kind: {{ .Values.tls.certManager.issuerKind }}
+{{- end }}
