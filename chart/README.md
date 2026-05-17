@@ -313,7 +313,7 @@ KOTS, Embedded Cluster — even without helmfile orchestration.
 Pattern adapted from
 [`replicatedhq/platform-examples` multi-chart-orchestration](https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration),
 which uses `bitnami/kubectl`. This chart cannot use Bitnami images
-(see CLAUDE.md "Non-Negotiables") and uses
+(see AGENTS.md "Non-Negotiables") and uses
 [`alpine/k8s`](https://hub.docker.com/r/alpine/k8s) instead — first-party
 to the Alpine Linux organization, multi-arch, and ships kubectl alongside
 a busybox shell. We considered `registry.k8s.io/kubectl` (the official

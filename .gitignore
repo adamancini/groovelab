@@ -1,6 +1,8 @@
 .vault/
 .claude/
 .worktrees/
+.codebase/
+.opencode/
 
 # Go
 /backend/bin/
@@ -23,3 +25,15 @@ chart/*.tgz
 # (co-located with KOTS CRs so `replicated release create --yaml-dir release/`
 # picks up both). Should not be committed.
 release/*.tgz
+
+release-review-*.md
+
+# Paivot runtime state (managed by pvg)
+.vault/issues/
+.vault/.nd.yaml
+.vault/.piv-loop-state.json
+.vault/.piv-loop-snapshot.json
+.vault/.dispatcher-state.json
+.vault/.sessionname-state.json
+.vault/.vlt.lock
+.vault/.guard/

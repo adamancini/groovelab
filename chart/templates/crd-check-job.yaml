@@ -5,7 +5,7 @@ CRD-check post-install/post-upgrade Helm hook.
 Pattern adapted from
 https://github.com/replicatedhq/platform-examples/tree/main/patterns/multi-chart-orchestration
 (which uses bitnami/kubectl). This chart cannot use Bitnami images
-(see CLAUDE.md "Non-Negotiables"); we use the official upstream
+(see AGENTS.md "Non-Negotiables"); we use the official upstream
 registry.k8s.io/kubectl image instead.
 
 Belt-and-suspenders for CNPG CRD ordering: the helmfile pipeline

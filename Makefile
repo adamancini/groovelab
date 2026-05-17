@@ -4,7 +4,7 @@
 # exercise the exact same packaging path that CI uses. The intent is zero
 # drift between `make release-unstable` and the tag-triggered release job.
 #
-# Convention (per CLAUDE.md "Non-Negotiables"): pass env vars AFTER the
+# Convention (per AGENTS.md "Non-Negotiables"): pass env vars AFTER the
 # command, e.g. `make release-unstable VERSION=v0.1.1`, never before.
 #
 # Fixes GRO-kydk: `replicated release create --yaml-dir chart/` silently
@@ -26,13 +26,14 @@ DIST_DIR ?= dist
 CHART_VERSION := $(shell yq -r '.version' $(CHART_DIR)/Chart.yaml)
 CHART_TGZ := $(DIST_DIR)/$(APP_SLUG)-$(CHART_VERSION).tgz
 
-.PHONY: help chart-deps chart-package chart-lint release-lint lint \
+.PHONY: help chart-deps chart-package chart-lint chart-lint-dev chart-template release-lint lint \
         clean clean-dist clean-release clean-charts \
         check-version-sync \
         release-unstable \
         pr-slug pr-channel pr-customer pr-cluster pr-install pr-test pr-teardown \
-        build build-frontend build-backend release \
-        customer cluster deploy expose smoke uat teardown \
+        build build-frontend build-backend build-local build-local-backend build-local-frontend release \
+        customer customer-install customer-uninstall cluster cluster-delete deploy expose smoke uat teardown \
+        dev-install dev-upgrade dev-uninstall dev-watch dev-port-forward dev-pull-secret dev-setup \
         _require-version _require-version-tag _require-customer _require-cluster \
         _require-token _require-not-main
 
@@ -48,6 +49,8 @@ help: ## Show available targets
 	@echo "Lint:"
 	@echo "  make lint                          # helm lint + replicated release lint"
 	@echo "  make chart-lint                    # helm lint only"
+	@echo "  make chart-lint-dev                # helm lint with dev values"
+	@echo "  make chart-template                # render templates to stdout (dev values)"
 	@echo "  make release-lint                  # replicated release lint only (packages chart first)"
 	@echo ""
 	@echo "Clean (working-tree hygiene):"
@@ -60,6 +63,7 @@ help: ## Show available targets
 	@echo ""
 	@echo "Build & release:"
 	@echo "  make build VERSION=0.1.3           # build + push frontend and backend images"
+	@echo "  make build-local                   # build images locally (no push, tag latest+sha7)"
 	@echo "  make release                       # dev-loop: build + package + publish to Unstable"
 	@echo "                                     #           VERSION = <chart-version>+<sha7>; no git mutations"
 	@echo "  make release CHANNEL=feat/topic    # dev-loop on a feature channel (slug-normalized)"
@@ -68,9 +72,23 @@ help: ## Show available targets
 	@echo "  make release-unstable              # alias for: make release CHANNEL=Unstable"
 	@echo "  make check-version-sync            # read-only: verify Chart.yaml and helmchart.yaml agree"
 	@echo ""
+	@echo "Dev loop (helmfile, local chart + GHCR images):"
+	@echo "  make dev-setup                     # full setup: cluster + pull-secret + helmfile sync"
+	@echo "  make dev-install                   # helmfile sync (dev environment)"
+	@echo "  make dev-upgrade                   # helmfile sync (dev environment)"
+	@echo "  make dev-uninstall                 # helmfile destroy (dev environment)"
+	@echo "  make dev-watch                     # watch pods across groovelab + cnpg-system"
+	@echo "  make dev-port-forward              # port-forward frontend to https://localhost:8443"
+	@echo "  make dev-pull-secret               # create GHCR imagePullSecret in namespace"
+	@echo ""
+	@echo "Customer install (OCI chart, proxy registry images):"
+	@echo "  make customer-install LICENSE_ID=...    # install via helmfile (replicated environment)"
+	@echo "  make customer-uninstall LICENSE_ID=...  # uninstall via helmfile (replicated environment)"
+	@echo ""
 	@echo "Deploy & UAT (any cluster, any customer):"
 	@echo "  make customer NAME=uat-v0.1.3 CHANNEL=Unstable"
 	@echo "  make cluster NAME=uat-v0-1-3 TTL=2h"
+	@echo "  make cluster-delete CLUSTER=uat-v0-1-3   # delete cluster, remove kubeconfig"
 	@echo "  make deploy VERSION=0.1.2 CUSTOMER=uat-v0.1.3 CLUSTER=uat-v0-1-3"
 	@echo "  make expose CLUSTER=uat-v0-1-3                 # public ingress URL (rke2/EC clusters only)"
 	@echo "  make uat VERSION=0.1.2 CHANNEL=Unstable        # composite of the three above + smoke"
@@ -87,6 +105,15 @@ chart-deps: ## Update chart dependencies (runs `helm dependency update`)
 
 chart-lint: ## Run `helm lint` on the chart
 	helm lint $(CHART_DIR)
+
+chart-lint-dev: chart-deps ## Run `helm lint` on the chart with dev values
+	helm lint $(CHART_DIR) -f $(CHART_DIR)/values.yaml -f $(CHART_DIR)/values-dev.yaml
+
+chart-template: chart-deps ## Render chart templates to stdout (dev environment)
+	helm template $(APP_SLUG) $(CHART_DIR) \
+	  -f $(CHART_DIR)/values.yaml \
+	  -f $(CHART_DIR)/values-dev.yaml \
+	  --set cloudnative-pg.enabled=false
 
 # release-lint runs `replicated release lint` against the release/ directory
 # AFTER packaging the chart into it. The chart tarball must be co-located with
@@ -557,6 +584,83 @@ build-frontend: _require-version ## Build and push frontend image for VERSION
 	  ./frontend
 	@echo "OK: $(GHCR_FRONTEND):$(APP_VER) pushed."
 
+# SHA7 is used for local-only image tags (no VERSION required).
+SHA7 := $(shell git rev-parse --short HEAD)
+
+build-local: build-local-backend build-local-frontend ## Build both images locally (no push, tag latest+SHA7)
+	@echo "OK: local images built ($(SHA7) + latest)."
+
+build-local-backend: ## Build backend image locally (no push, tag latest+SHA7)
+	@set -euo pipefail; \
+	echo "==> Building $(GHCR_BACKEND):$(SHA7) (linux/amd64)"; \
+	docker buildx build \
+	  --platform linux/amd64 \
+	  --tag "$(GHCR_BACKEND):$(SHA7)" \
+	  --tag "$(GHCR_BACKEND):latest" \
+	  ./backend
+	@echo "OK: $(GHCR_BACKEND):$(SHA7) built."
+
+build-local-frontend: ## Build frontend image locally (no push, tag latest+SHA7)
+	@set -euo pipefail; \
+	echo "==> Building $(GHCR_FRONTEND):$(SHA7) (linux/amd64)"; \
+	docker buildx build \
+	  --platform linux/amd64 \
+	  --tag "$(GHCR_FRONTEND):$(SHA7)" \
+	  --tag "$(GHCR_FRONTEND):latest" \
+	  ./frontend
+	@echo "OK: $(GHCR_FRONTEND):$(SHA7) built."
+
+# ---------- dev loop (helmfile) --------------------------------------------
+#
+# Local development install via helmfile. Assumes images are already pushed
+# (CI or `make build`) and a cluster with valid KUBECONFIG exists.
+# For a fresh CMX cluster, run `make cluster NAME=...` first, then
+# `make dev-pull-secret dev-install`.
+# ---------------------------------------------------------------------------
+
+HELMFILE_ENV ?= dev
+
+DEV_CLUSTER_NAME ?= groovelab-dev
+
+dev-install: ## Install groovelab via helmfile (dev environment, local chart + GHCR images)
+	HELMFILE_ENVIRONMENT=$(HELMFILE_ENV) helmfile sync
+
+dev-upgrade: ## Upgrade groovelab via helmfile (dev environment)
+	HELMFILE_ENVIRONMENT=$(HELMFILE_ENV) helmfile sync
+
+dev-uninstall: ## Uninstall groovelab via helmfile (dev environment)
+	HELMFILE_ENVIRONMENT=$(HELMFILE_ENV) helmfile destroy
+
+dev-watch: ## Watch pod status across groovelab and cnpg-system namespaces
+	kubectl get pods -n $(NAMESPACE) -n cnpg-system -w
+
+dev-port-forward: ## Port-forward groovelab frontend to https://localhost:8443
+	@echo "Forwarding https://localhost:8443 -> $(APP_SLUG)-frontend:443"
+	@echo "App available at https://localhost:8443 (nginx handles TLS termination internally)"
+	kubectl port-forward -n $(NAMESPACE) svc/$(APP_SLUG)-frontend 8443:443
+
+dev-pull-secret: ## Create the GHCR imagePullSecret in the $(NAMESPACE) namespace (reads docker-credential-desktop)
+	@set -euo pipefail; \
+	kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -; \
+	GHCR_USER=$$(docker-credential-desktop get <<< "ghcr.io" 2>/dev/null \
+	  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Username'])"); \
+	GHCR_TOKEN=$$(docker-credential-desktop get <<< "ghcr.io" 2>/dev/null \
+	  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['Secret'])"); \
+	kubectl create secret docker-registry ghcr-pull-secret \
+	  --namespace $(NAMESPACE) \
+	  --docker-server=ghcr.io \
+	  --docker-username="$$GHCR_USER" \
+	  --docker-password="$$GHCR_TOKEN" \
+	  --dry-run=client -o yaml | kubectl apply -f -; \
+	echo "ghcr-pull-secret created/updated."
+
+dev-setup: ## Full dev setup: create CMX cluster, pull GHCR secret, install app
+	$(MAKE) cluster NAME=$(DEV_CLUSTER_NAME)
+	$(MAKE) dev-pull-secret
+	HELMFILE_ENVIRONMENT=$(HELMFILE_ENV) helmfile sync
+	@echo ""
+	@echo "Dev setup complete. Run 'make dev-watch' to follow pod status."
+
 # ---------- release --------------------------------------------------------
 #
 # Two paths through the same target (GRO-lxiv):
@@ -741,6 +845,27 @@ customer: _require-token ## Create a dev customer NAME on CHANNEL (idempotent; n
 	  echo "OK: customer $$NAME created (license_id: $$LICENSE_ID, no expiration)"; \
 	fi
 
+customer-install: ## Install groovelab as a Replicated customer via helmfile (requires LICENSE_ID env var)
+	@set -euo pipefail; \
+	if [ -z "$${LICENSE_ID:-}" ]; then \
+	  echo "ERROR: LICENSE_ID env var is required."; \
+	  echo "  export LICENSE_ID=<your-license-id>"; \
+	  exit 1; \
+	fi; \
+	echo "$$LICENSE_ID" | helm registry login registry.replicated.com \
+	  --username "$$LICENSE_ID" --password-stdin; \
+	echo "==> Installing groovelab (replicated environment) via helmfile..."; \
+	HELMFILE_ENVIRONMENT=replicated helmfile sync
+
+customer-uninstall: ## Uninstall groovelab as a Replicated customer via helmfile (requires LICENSE_ID env var)
+	@set -euo pipefail; \
+	if [ -z "$${LICENSE_ID:-}" ]; then \
+	  echo "ERROR: LICENSE_ID env var is required."; \
+	  exit 1; \
+	fi; \
+	echo "==> Uninstalling groovelab (replicated environment) via helmfile..."; \
+	HELMFILE_ENVIRONMENT=replicated helmfile destroy
+
 cluster: _require-token ## Provision a CMX cluster NAME (TTL 2h, k3s 1.34, idempotent)
 	@set -euo pipefail; \
 	if [ -z "$${NAME:-}" ]; then echo "ERROR: NAME=<cluster-name> is required."; exit 2; fi; \
@@ -764,6 +889,19 @@ cluster: _require-token ## Provision a CMX cluster NAME (TTL 2h, k3s 1.34, idemp
 	echo "OK: kubeconfig written to $(DIST_DIR)/$$NAME-kubeconfig.yaml"; \
 	echo ""; \
 	echo "Use:  export KUBECONFIG=$$PWD/$(DIST_DIR)/$$NAME-kubeconfig.yaml"
+
+cluster-delete: _require-token _require-cluster ## Delete CLUSTER (kubeconfig removed; no customer archival)
+	@set -euo pipefail; \
+	CLUSTER_ID=$$(replicated cluster ls --output json \
+	  | jq -r --arg n "$(CLUSTER)" '[.[] | select(.name == $$n)][0].id // empty'); \
+	if [ -n "$$CLUSTER_ID" ]; then \
+	  echo "==> Deleting cluster $(CLUSTER) ($$CLUSTER_ID)"; \
+	  replicated cluster rm "$$CLUSTER_ID" --app "$(APP_SLUG)" || true; \
+	else \
+	  echo "==> Cluster $(CLUSTER) already gone"; \
+	fi; \
+	rm -f $(DIST_DIR)/$(CLUSTER)-kubeconfig.yaml; \
+	echo "OK: cluster deleted."
 
 # ---------- deploy ---------------------------------------------------------
 

@@ -318,7 +318,7 @@ The CLI (`replicated customer update --kots-install=false --channel ... --email 
 
 ## Entry 30 — 2026-04-21 — annoyance
 
-**Trying to:** Review Tier 1 (Automate It) work before moving on to Tier 5, per the new "UAT and Loom demo before each tier" rule added to `CLAUDE.md`.
+**Trying to:** Review Tier 1 (Automate It) work before moving on to Tier 5, per the new "UAT and Loom demo before each tier" rule added to `AGENTS.md`.
 **Expected:** The `pr.yaml` and `release.yaml` workflows in `.github/workflows/` would have been exercised against GitHub Actions at least once during Tier 1, with a visible green run in the Actions tab proving the CI path actually works end to end. That's the natural vendor workflow: push to remote, iterate until green, call it done.
 **Actual:** Both workflows were authored by the paivot agent while the repo had no GitHub remote configured. The YAML was committed locally; Tier 1 stories were closed as complete; the remote was added days later (pull request #1 for Renovate shows the first Actions run on the repo, unrelated to Tier 1). The CI was never proven to work before Tier 1 was declared done. This is the kind of thing a real vendor's release engineer would catch immediately because they'd be pushing their own commits and staring at the Actions tab.
 **Resolution:** Rewriting the release strategy now, alongside the first push to origin that actually exercises the workflows. Adding new `branch-push.yaml` to handle feature branches → matching channels and `main` → Unstable, keeping `pr.yaml` for per-PR ephemeral channels and `release.yaml` for tag → Stable. Proposed guardrail for agent orchestration: Tier 1 acceptance criteria must include "at least one green GitHub Actions run on origin" before stories can close. Resolution time ~30 minutes to draft the plan; execution in progress.
@@ -362,7 +362,7 @@ The CLI (`replicated customer update --kots-install=false --channel ... --email 
 
 **Resolution:** Pending. Two parts:
 1. Demote v99.99.99 from Unstable via the Vendor Portal UI (admin permission; CI service-account token is denied for `channel demote`).
-2. Codify a project rule that test/dev/gate-test tags must use SemVer pre-release identifiers (`v0.0.0-test.<sha>`, `v<real>-rc.<n>`) so they cannot win SemVer-latest resolution. Update `CLAUDE.md` Non-Negotiables and any future "test the guard" prompts to a coding agent. The `pr.yaml` workflow already does the right thing — per-PR versions use `0.0.0-pr${PR_NUMBER}` — so the prevention pattern exists; it just wasn't applied to the manual-tag gate-test flow.
+2. Codify a project rule that test/dev/gate-test tags must use SemVer pre-release identifiers (`v0.0.0-test.<sha>`, `v<real>-rc.<n>`) so they cannot win SemVer-latest resolution. Update `AGENTS.md` Non-Negotiables and any future "test the guard" prompts to a coding agent. The `pr.yaml` workflow already does the right thing — per-PR versions use `0.0.0-pr${PR_NUMBER}` — so the prevention pattern exists; it just wasn't applied to the manual-tag gate-test flow.
 
 **Severity:** blocker
 
