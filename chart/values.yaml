@@ -205,7 +205,7 @@ crdCheck:
   image:
     registry: ""
     repository: alpine/k8s
-    tag: "1.36.0"
+    tag: "1.37.0"
     pullPolicy: IfNotPresent
   # Required CRDs to wait for. Add subchart CRDs here as the chart grows.
   crds:
